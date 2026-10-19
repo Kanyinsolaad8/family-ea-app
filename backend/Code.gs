@@ -14,6 +14,7 @@
 
 var CFG = {
   SHEET_NAME: 'Family EA App Data',
+  APP_URL: 'https://kanyinsolaad8.github.io/family-ea-app/', // tapping a phone alert opens this
   PEOPLE: { ayo: 'Ayo', itunu: 'Itunu' },
   OWNERS: ['ayo', 'itunu', 'both', 'either'],
   HISTORY_DAYS: 190,          // a little over 6 months
@@ -618,7 +619,7 @@ function push_(person, title, message) {
   var topic = props.getProperty('NTFY_TOPIC_' + person);
   if (!topic) return false;
   var headers = { Title: String(title).replace(/[^\x20-\x7E]/g, '').slice(0, 60) || 'Family EA', Tags: 'house' };
-  var appUrl = props.getProperty('APP_URL');
+  var appUrl = props.getProperty('APP_URL') || CFG.APP_URL;
   if (appUrl) headers.Click = appUrl;
   try {
     var res = UrlFetchApp.fetch('https://ntfy.sh/' + encodeURIComponent(topic), { method: 'post', payload: String(message).slice(0, 400), headers: headers, muteHttpExceptions: true });
