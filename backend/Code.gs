@@ -345,8 +345,9 @@ function buildBootstrap_(person, now) {
       topic: PropertiesService.getScriptProperties().getProperty('NTFY_TOPIC_' + person) || '',
       vapid: vapid_().pub,
       devices: devicesFor_(person),
-      morning: meta['alerts_morning_' + person] !== '0',
-      evening: meta['alerts_evening_' + person] !== '0'
+      morning: alertOn_(meta, person, 'morning'), evening: alertOn_(meta, person, 'evening'),
+      water: alertOn_(meta, person, 'water'), open5: alertOn_(meta, person, 'open5'), week: alertOn_(meta, person, 'week'), reply: alertOn_(meta, person, 'reply'),
+      quiet: quietOf_(meta, person), paused: paused_(meta, person, londonDay_(now))
     }
   };
 }
@@ -752,6 +753,10 @@ function ingestMessage_(m) {
     if (!CFG.PEOPLE[to]) return; // replies always go to one named person
     appendRow_('Messages', { id: 'ea_' + hashId_(m.id + '|' + r.text).slice(0, 12), ts: when, person: to, from: 'ea', text: String(r.text).slice(0, 4000), status: 'received', ref: String(r.ref || '') });
     if (r.ref) updateRow_('Messages', 'id', String(r.ref), { status: 'answered' });
+    // A heads-up that the answer is in, for fresh replies only (never when old emails are re-read).
+    var meta = metaMap_(), now = new Date();
+    if (now.getTime() - (Date.parse(when) || 0) < 2 * 3600000 && alertOn_(meta, to, 'reply') && !inQuiet_(meta, to, londonHour_(now)) && keysFor_(to).length)
+      push_(to, 'Your EA replied', snippet_(String(r.text), 160));
   });
 
   return { newFor: newFor };
@@ -1191,10 +1196,51 @@ function handleSnooze_(person, body, now) {
 }
 
 function handlePrefs_(person, body) {
-  if ('morning' in body) setMeta_('alerts_morning_' + person, body.morning ? '1' : '0');
-  if ('evening' in body) setMeta_('alerts_evening_' + person, body.evening ? '1' : '0');
+  ALERT_KINDS_.forEach(function (k) { if (k in body) setMeta_('alerts_' + k + '_' + person, body[k] ? '1' : '0'); });
+  if ('quiet' in body && ['off', '22-7', '21-8', '23-7'].indexOf(String(body.quiet)) > -1) setMeta_('quiet_' + person, String(body.quiet));
+  if ('pause' in body) setMeta_('pause_' + person, body.pause ? londonDay_(new Date()) : '');
+  if (body.waterLog && typeof body.waterLog === 'object') {
+    var w = body.waterLog;
+    setMeta_('water_' + person, JSON.stringify({ day: String(w.day || '').slice(0, 10), n: Math.max(0, Math.min(40, +w.n || 0)), goal: Math.max(1, Math.min(20, +w.goal || 8)), game: String(w.game || '').slice(0, 10) }));
+  }
   return { ok: true };
 }
+
+/* ── Gentle, flexible nudges. Each can be switched off; quiet hours hold everything; at most 3 extra nudges a day. ── */
+var ALERT_KINDS_ = ['morning', 'evening', 'water', 'open5', 'week', 'reply'];
+function alertOn_(meta, p, k) { var v = meta['alerts_' + k + '_' + p]; return v !== '0'; }
+function quietOf_(meta, p) { return meta['quiet_' + p] || '22-7'; }
+function inQuiet_(meta, p, hour) {
+  var q = quietOf_(meta, p); if (q === 'off') return false;
+  var a = +q.split('-')[0], b = +q.split('-')[1];
+  return hour >= a || hour < b;
+}
+function paused_(meta, p, day) { return meta['pause_' + p] === day; }
+function gentle_(meta, p, day, title, msg) {
+  var k = 'nudged_' + p, parts = String(meta[k] || '').split('|'), n = parts[0] === day ? +parts[1] || 0 : 0;
+  if (n >= 3) return false;
+  push_(p, title, msg);
+  meta[k] = day + '|' + (n + 1); setMeta_(k, meta[k]);
+  return true;
+}
+function dayOf_(iso) { var t = Date.parse(iso); return isNaN(t) ? '' : londonDay_(new Date(t)); }
+function stillOpen_(person, now) {
+  var today = londonDay_(now), out = [];
+  rows_('Notes').filter(function (n) { return n.person === person && n.status === 'open' && n.remindAt && dayOf_(n.remindAt) <= today; })
+    .forEach(function (n) { out.push(n.text); });
+  rows_('Items').filter(function (r) { return canSee_(person, r.person) && r.status === 'open' && r.module === 'plan' && r.due && dayOf_(r.due) === today; })
+    .forEach(function (r) { out.push(r.title); });
+  return out;
+}
+function comingUp_(person, now, days) {
+  var from = londonDay_(new Date(now.getTime() + 86400000)), to = londonDay_(new Date(now.getTime() + days * 86400000)), out = [];
+  rows_('Items').filter(function (r) { return canSee_(person, r.person) && r.status === 'open' && r.module === 'plan' && r.due && dayOf_(r.due) >= from && dayOf_(r.due) <= to; })
+    .sort(function (a, b) { return a.due < b.due ? -1 : 1; }).forEach(function (r) { out.push(r.title + (days > 1 ? ' (' + Utilities.formatDate(new Date(Date.parse(r.due)), 'Europe/London', 'EEE') + ')' : '')); });
+  rows_('Notes').filter(function (n) { return n.person === person && n.status === 'open' && n.remindAt && dayOf_(n.remindAt) >= from && dayOf_(n.remindAt) <= to; })
+    .forEach(function (n) { out.push(n.text); });
+  return out;
+}
+function bullets_(list, max) { return list.slice(0, max).map(function (x) { return '\u2022 ' + x; }).join('\n') + (list.length > max ? '\n+' + (list.length - max) + ' more' : ''); }
 
 function londonDay_(d) { return Utilities.formatDate(d, 'Europe/London', 'yyyy-MM-dd'); }
 function londonHour_(d) { return +Utilities.formatDate(d, 'Europe/London', 'H'); }
@@ -1237,33 +1283,48 @@ function tick() {
 }
 
 function runTick_(now) {
+  var meta = metaMap_(), day = londonDay_(now), hour = londonHour_(now);
+  // Your own reminders always come, but wait until quiet hours end.
   rows_('Notes').forEach(function (n) {
-    if (n.status === 'open' && n.remindAt && !n.sentAt && Date.parse(n.remindAt) <= now.getTime()) {
+    if (n.status === 'open' && n.remindAt && !n.sentAt && Date.parse(n.remindAt) <= now.getTime() && !inQuiet_(meta, n.person, hour)) {
       push_(n.person, 'Reminder', n.text);
       updateRow_('Notes', 'id', n.id, { sentAt: now.toISOString() });
     }
   });
   var items = rows_('Items');
   rows_('Snoozes').forEach(function (z) {
-    if (!z.until || z.sentAt || Date.parse(z.until) > now.getTime()) return;
+    if (!z.until || z.sentAt || Date.parse(z.until) > now.getTime() || inQuiet_(meta, z.person, hour)) return;
     var it = items.filter(function (r) { return r.id === z.itemId; })[0];
     if (it && canSee_(z.person, it.person) && (it.status === 'open' || it.status === 'read')) push_(z.person, 'Back on your list', it.title);
     updateRow_('Snoozes', 'id', z.id, { sentAt: now.toISOString() });
   });
-  var meta = metaMap_(), day = londonDay_(now), hour = londonHour_(now);
   Object.keys(CFG.PEOPLE).forEach(function (p) {
     if (!keysFor_(p).length) return; // only people who use the app
-    if (hour >= 8 && hour < 11 && meta['morning_' + p] !== day && meta['alerts_morning_' + p] !== '0') {
-      var plan = planToday_(p, now);
-      var q = quoteOfDay_(now);
+    if (inQuiet_(meta, p, hour) || paused_(meta, p, day)) return;
+    function once(k, fn) { if (meta[k + '_' + p] === day) return; fn(); meta[k + '_' + p] = day; setMeta_(k + '_' + p, day); }
+    if (hour >= 8 && hour < 11 && alertOn_(meta, p, 'morning')) once('morning', function () {
+      var plan = planToday_(p, now), q = quoteOfDay_(now);
       push_(p, 'Your plan for today', (plan.length ? plan.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') : 'Nothing urgent today. Jot anything new with + in Family EA.') + (q ? '\n\n' + q : ''));
-      setMeta_('morning_' + p, day);
-    }
-    if (hour >= 20 && hour < 23 && meta['evening_' + p] !== day && meta['alerts_evening_' + p] !== '0') {
-      var n = doneToday_(p, now);
-      push_(p, 'Evening check', (n ? 'Done today: ' + n + '. ' : '') + 'Anything to jot down for tomorrow? Tap + in Family EA.');
-      setMeta_('evening_' + p, day);
-    }
+    });
+    if (hour >= 15 && hour < 17 && alertOn_(meta, p, 'water')) once('waterNudge', function () {
+      var w = null; try { w = JSON.parse(meta['water_' + p] || 'null'); } catch (e) { w = null; }
+      if (!w) return; // only for people who use the water tracker
+      var n = w.day === day ? w.n : 0, goal = w.goal || 8;
+      if (n >= Math.ceil(goal / 2)) return; // on track, so no nudge
+      gentle_(meta, p, day, 'Water check', n + ' of ' + goal + ' glasses so far today. Time for one?' + (w.game && w.game !== 'off' ? ' Your next glass unlocks a ' + (w.game === 'french' ? 'French challenge' : 'puzzle') + '.' : ''));
+    });
+    if (hour >= 17 && hour < 19 && alertOn_(meta, p, 'open5')) once('open5', function () {
+      var list = stillOpen_(p, now);
+      if (list.length) gentle_(meta, p, day, 'Still open today', bullets_(list, 3) + '\nTick them off or move them to tomorrow.');
+    });
+    if (hour >= 18 && hour < 21 && Utilities.formatDate(now, 'Europe/London', 'u') === '7' && alertOn_(meta, p, 'week')) once('week', function () {
+      var list = comingUp_(p, now, 7);
+      if (list.length) gentle_(meta, p, day, 'Your week ahead', bullets_(list, 4));
+    });
+    if (hour >= 20 && hour < 23 && alertOn_(meta, p, 'evening')) once('evening', function () {
+      var n = doneToday_(p, now), tomorrow = comingUp_(p, now, 1);
+      push_(p, 'Evening check', (n ? 'Done today: ' + n + '. ' : '') + (tomorrow.length ? 'Tomorrow: ' + tomorrow.slice(0, 3).join('; ') + (tomorrow.length > 3 ? '; +' + (tomorrow.length - 3) + ' more' : '') + '. ' : '') + 'Anything to jot down? Tap + in Family EA.');
+    });
   });
 }
 
