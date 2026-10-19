@@ -281,6 +281,13 @@ nav.tabs button[aria-current="page"] svg{animation:nudge .35s var(--ease)}
 @keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
 @keyframes shrink{from{width:100%}to{width:0}}
 .pushon{display:flex;gap:8px;align-items:center;padding:10px 12px;border-radius:12px;background:var(--goodSoft);color:var(--good);font-weight:700;font-size:.875rem}
+/* calm ask bar */
+.askbar{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:0 16px;border-radius:26px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-align:left;box-shadow:var(--shadow);transition:transform .12s var(--ease),border-color .2s var(--ease)}
+.askbar svg{color:var(--olive);flex-shrink:0}
+.askbar .ph{flex:1;font-size:.9375rem;min-width:0}
+.askbar .hint{font-size:.75rem;font-weight:700;color:var(--olive);background:var(--oliveSoft);padding:3px 10px;border-radius:10px;white-space:nowrap}
+.askbar:active{transform:scale(.98)}
+.hdot.static{position:static;flex-shrink:0}
 /* instant answers */
 .bub.instant .b{border-color:var(--olive);background:var(--oliveSoft);color:var(--ink)}
 .bub .m svg{vertical-align:-2px;color:var(--olive)}

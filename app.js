@@ -530,7 +530,7 @@
     return '<header class="top"><div class="top-row"><div style="min-width:0">' +
       '<div class="eyebrow"><span class="leaf">' + svg(I.leaf, 14) + '</span>Family EA · ' + esc(dayLabel(new Date().toISOString())) + '</div>' +
       '<h1>' + esc(titles[S.tab] || '') + '</h1></div>' +
-      '<div class="hbtns"><button class="hbtn" data-act="tab" data-v="ask" aria-label="Ask your EA"' + (S.tab === 'ask' ? ' aria-current="page"' : '') + '>' + svg(I.chat, 22) + (unreadCount() ? '<span class="hdot" aria-label="New reply"></span>' : '') + '</button>' +
+      '<div class="hbtns">' +
       '<button class="avatar ' + me.cls + '" data-act="settings" aria-label="Your settings and accessibility">' + esc(me.short) + '<span class="cog">' + svg(I.cog, 12) + '</span></button></div></div>' +
       '<div class="sync" id="sync">' + syncInner() + '</div></header>';
   }
@@ -558,6 +558,10 @@
     return m ? html.replace(m[0], m[0] + v) : html.replace(/^<(\w+)/, '<$1 style="' + v + '"');
   }
 
+  function askBar() {
+    var n = unreadCount();
+    return '<button class="askbar" data-act="openask">' + svg(I.chat, 20) + '<span class="ph">' + (n ? 'Your EA replied \u00b7 tap to read' : 'Ask your EA anything\u2026') + '</span>' + (n ? '<span class="hdot static" aria-label="New reply"></span>' : '<span class="hint">Instant answers</span>') + '</button>';
+  }
   function today() {
     var all = needs();
     var tiles = [S.person, 'both', 'either'].map(function (o) {
@@ -566,7 +570,7 @@
       return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '"><span class="n">' + n + '</span><span class="l">' + esc(w.label) + '</span><span class="s">' + sub + '</span></button>';
     }).join('');
     var list = all.filter(function (x) { return okWho(x.owner); });
-    var html = [];
+    var html = [askBar()];
     if (!S.demo && !isStandalone() && !S.installHidden) {
       html.push('<section class="card pad stack" aria-label="Install"><div class="row-between"><b>Add to your Home Screen</b><button class="textbtn" data-act="hideinstall">Hide</button></div>' +
         '<div class="note">In Safari, tap Share, then “Add to Home Screen”. Open it from there and paste your key once more.</div>' +
@@ -825,7 +829,7 @@
   }
 
   function historyView() {
-    return ['<div class="search"><label class="sr" for="hist-q">Search history</label><input id="hist-q" type="search" autocomplete="off" placeholder="Search 6 months of history…" value="' + esc(S.hq) + '">' + svg(I.search, 20) + '</div>',
+    return [askBar(), '<div class="search"><label class="sr" for="hist-q">Search history</label><input id="hist-q" type="search" autocomplete="off" placeholder="Search 6 months of history…" value="' + esc(S.hq) + '">' + svg(I.search, 20) + '</div>',
       '<div id="hist-results" class="stack" style="gap:16px">' + historyResults() + '</div>'];
   }
   function historyResults() {
@@ -1328,6 +1332,7 @@
     var item;
     switch (act) {
       case 'tab': setTab(v); break;
+      case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;
       case 'go':
         if (v.indexOf('intel:') === 0) { S.seg = v.slice(6); setTab('intel'); }
         else { if (v === 'houses') S.houseFilter = 'new'; setTab(v); }
