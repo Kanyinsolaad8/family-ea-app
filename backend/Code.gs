@@ -53,6 +53,8 @@ var TABLES = {
   Notes: ['id', 'person', 'text', 'created', 'remindAt', 'status', 'sentAt', 'doneAt'],
   Groceries: ['id', 'name', 'qty', 'aisle', 'addedBy', 'created', 'ticked', 'tickedBy', 'tickedAt', 'removed'],
   Snoozes: ['id', 'person', 'itemId', 'until', 'sentAt'],
+  Pushes: ['id', 'person', 'endpoint', 'p256dh', 'auth', 'status', 'created', 'lastOk'],
+  Alerts: ['id', 'person', 'ts', 'title', 'body'],
   Seen: ['msgId', 'ts'],
   Meta: ['key', 'value'],
   Log: ['ts', 'level', 'text']
@@ -70,6 +72,8 @@ function doGet(e) {
     }
     var person = personForKey_(p.key);
     if (!person) return json_({ ok: false, error: 'bad_key' });
+    if (p.action === 'report') return json_(handleReport_(person, String(p.id || '')));
+    if (p.action === 'alerts') return json_(alertsFor_(person, String(p.since || '')));
     return json_(buildBootstrap_(person, new Date()));
   } catch (err) {
     log_('error', 'doGet: ' + err);
@@ -98,7 +102,8 @@ function doPost(e) {
     if (body.type === 'grocery') return json_(handleGrocery_(person, body, new Date()));
     if (body.type === 'snooze') return json_(handleSnooze_(person, body, new Date()));
     if (body.type === 'prefs') return json_(handlePrefs_(person, body));
-    if (body.type === 'testalert') return json_({ ok: push_(person, 'Family EA', 'Test alert: phone alerts are working.') });
+    if (body.type === 'pushsub') return json_(handlePushSub_(person, body));
+    if (body.type === 'testalert') { var sentN = push_(person, 'Family EA', 'Test alert: phone alerts are working.'); return json_({ ok: !!sentN, devices: devicesFor_(person) }); }
     return json_({ ok: false, error: 'unknown_type' });
   } catch (err) {
     log_('error', 'doPost: ' + err);
@@ -338,6 +343,8 @@ function buildBootstrap_(person, now) {
     doneToday: doneToday_(person, now),
     alerts: {
       topic: PropertiesService.getScriptProperties().getProperty('NTFY_TOPIC_' + person) || '',
+      vapid: vapid_().pub,
+      devices: devicesFor_(person),
       morning: meta['alerts_morning_' + person] !== '0',
       evening: meta['alerts_evening_' + person] !== '0'
     }
@@ -354,6 +361,115 @@ function publicItem_(r, person) {
     id: r.id, module: r.module, for: r.person, status: status, title: r.title,
     summary: r.summary, detail: r.detail, created: r.created, due: r.due, outcome: r.outcome, data: data
   };
+}
+
+/* ───────────────────────── Report breakdown (tap a History item) ───────────────────────── */
+
+/**
+ * The full story behind one History item, for the person asking only.
+ * Uses the item's own fields, the other items from the same email that this person may see,
+ * and a readable copy of the email itself with any section for the other person removed.
+ */
+function handleReport_(person, id) {
+  var r = rows_('Items').filter(function (x) { return x.id === id; })[0];
+  if (!r || !canSee_(person, r.person)) return { ok: false, error: 'not_found' };
+  var cache = CacheService.getScriptCache(), ck = 'rep2_' + person + '_' + hashId_(id + '|' + r.updated);
+  var hit = cache.get(ck);
+  if (hit) { try { return JSON.parse(hit); } catch (e) {} }
+
+  var data = {};
+  try { data = r.data ? JSON.parse(r.data) : {}; } catch (e) { data = {}; }
+  var out = {
+    ok: true, id: r.id, title: r.title, date: r.created, module: r.module, for: r.person, status: r.status,
+    summary: r.summary || '', detail: r.detail || '', outcome: r.outcome || '', due: r.due || '',
+    why: String(data.why || ''), source: String(data.source || ''), rag: String(data.rag || ''),
+    url: /^https?:\/\//i.test(String(data.url || data.listingUrl || '')) ? String(data.url || data.listingUrl) : '',
+    related: [], subject: '', blocks: [], hidden: 0
+  };
+  if (r.source) {
+    out.related = rows_('Items').filter(function (x) { return x.source === r.source && x.id !== r.id && canSee_(person, x.person); })
+      .slice(0, 12).map(function (x) { return { id: x.id, title: x.title, summary: x.summary || x.outcome || '', for: x.person }; });
+    try {
+      var m = GmailApp.getMessageById(r.source);
+      if (m) {
+        out.subject = cleanSubject_(m.getSubject());
+        var f = privacyFilter_(htmlToBlocks_(m.getBody() || ''), person);
+        out.blocks = f.blocks; out.hidden = f.hidden;
+      }
+    } catch (e) { log_('warn', 'report email: ' + e); }
+  }
+  try { cache.put(ck, JSON.stringify(out), 21600); } catch (e) {} // too big for the cache is fine
+  return out;
+}
+
+/** Email HTML → simple readable blocks: {t:'h'|'p'|'li', text, links:[{url,text}]} */
+function htmlToBlocks_(html) {
+  var s = String(html || '');
+  var A = CFG.BLOCK_START, B = CFG.BLOCK_END;
+  s = s.replace(new RegExp('<!--\\s*' + A + '[\\s\\S]*?' + B + '\\s*-->', 'g'), '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(style|script|head|title)[\s\S]*?<\/\1>/gi, '');
+  var links = [];
+  s = s.replace(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, function (_, url, txt) {
+    var t = decodeEntities_(stripTags_(txt)).replace(/\s+/g, ' ').trim();
+    url = decodeEntities_(url).trim();
+    if (!/^https?:\/\//i.test(url)) return t;
+    links.push({ url: url, text: t || url });
+    return ' \u0001' + (links.length - 1) + '\u0002 ';
+  });
+  s = s.replace(/<h[1-4]\b[^>]*>/gi, '\n\u0003').replace(/<\/h[1-4]>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '\n\u0004').replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|ul|ol|table|section|blockquote)>/gi, '\n')
+    .replace(/<\/t[dh]>/gi, '  ')
+    .replace(/<[^>]+>/g, '');
+  s = decodeEntities_(s).replace(/&(rsquo|lsquo);/g, '\u2019').replace(/&(rdquo|ldquo);/g, '\u201d')
+    .replace(/&mdash;/g, '\u2014').replace(/&ndash;/g, '\u2013').replace(/&middot;/g, '\u00b7').replace(/&pound;/g, '\u00a3')
+    .replace(/&hellip;/g, '\u2026').replace(/&bull;/g, '\u2022').replace(/&#x([0-9a-f]+);/gi, function (_, h) { return String.fromCodePoint(parseInt(h, 16)); });
+  var out = [], total = 0, prev = '';
+  s.split('\n').forEach(function (raw) {
+    if (out.length >= 220 || total > 16000) return;
+    var line = raw.replace(/[ \t\u00a0]+/g, ' ').trim();
+    var t = 'p';
+    if (line.charAt(0) === '\u0003') { t = 'h'; line = line.slice(1).trim(); }
+    if (line.charAt(0) === '\u0004') { t = 'li'; line = line.slice(1).trim(); }
+    var ls = [];
+    line = line.replace(/\u0001(\d+)\u0002/g, function (_, k) { var l = links[+k]; if (l) ls.push(l); return l ? l.text : ''; }).replace(/\s+/g, ' ').trim();
+    if (!line || line === prev || /^[\s\u00b7|\u2022\-–—]+$/.test(line)) return;
+    prev = line;
+    var b = { t: t, text: line.slice(0, 1200) };
+    if (ls.length) b.links = ls.slice(0, 4);
+    out.push(b); total += line.length;
+  });
+  return out;
+}
+
+/** Who a section header is for: 'ayo' / 'itunu' / 'both', or '' if the line isn't a header. */
+function sectionOwner_(text) {
+  var s = String(text || '').trim();
+  if (s.length > 90) return '';
+  var hasI = s.indexOf('\u2696') > -1, hasA = s.indexOf('\uD83D\uDEE1') > -1;
+  if (hasI && hasA) return 'both';
+  var names = Object.keys(CFG.PEOPLE);
+  for (var k = 0; k < names.length; k++) {
+    var nm = CFG.PEOPLE[names[k]];
+    var re = new RegExp('^(?:[^A-Za-z0-9]{0,4})(?:for\\s+)?' + nm + '\\b(?:\\s*[\\u00b7:\\-–—]\\s*\\d+\\s+items?)?\\s*[:\\-–—]?\\s*$', 'i');
+    if (re.test(s) || new RegExp('\\b' + nm + '\\s*\\u00b7\\s*\\d+\\s+items?\\b', 'i').test(s)) return names[k];
+  }
+  if (hasI && s.length < 60 && /itunu/i.test(s)) return 'itunu';
+  if (hasA && s.length < 60 && /ayo/i.test(s)) return 'ayo';
+  if (/^(?:[^A-Za-z0-9]{0,4})(?:for\s+)?(both of you|both|shared|for you both)\b[\s:\-–—·\d a-z]*$/i.test(s) && s.length < 40) return 'both';
+  return '';
+}
+
+/** Drops any section of the email that belongs to the other person. */
+function privacyFilter_(blocks, person) {
+  var current = 'both', kept = [], hidden = 0;
+  blocks.forEach(function (b) {
+    var o = sectionOwner_(b.text);
+    if (o) current = o;
+    if (canSee_(person, current)) kept.push(b); else hidden++;
+  });
+  return { blocks: kept, hidden: hidden };
 }
 
 /* ───────────────────────── Writes from the app ───────────────────────── */
@@ -685,7 +801,7 @@ function cleanData_(d) {
 function stripTags_(s) { return String(s || '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ''); }
 function decodeEntities_(s) {
   return String(s).replace(/&quot;/g, '"').replace(/&#39;|&#x27;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, function (_, n) { return String.fromCharCode(+n); }).replace(/&amp;/g, '&');
+    .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, function (_, n) { try { return String.fromCodePoint(+n); } catch (e) { return ''; } }).replace(/&amp;/g, '&');
 }
 function cleanSubject_(s) { return String(s || '').replace(/^\s*(re|fwd?):\s*/i, '').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Family EA email'; }
 function snippet_(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
@@ -707,17 +823,269 @@ function notify_(added) {
 }
 
 /** Sends one phone alert through ntfy to that person's own secret topic. */
+/** One phone alert with the task text: to this person's phones (Web Push), and ntfy if it's set up. */
 function push_(person, title, message) {
   var props = PropertiesService.getScriptProperties();
+  title = String(title || 'Family EA').slice(0, 80); message = String(message || '').slice(0, 400);
+  appendRow_('Alerts', { id: 'al' + Utilities.getUuid().slice(0, 8), person: person, ts: new Date().toISOString(), title: title, body: message });
+  var sent = 0;
+  try { sent = webPush_(person); } catch (e) { log_('warn', 'web push: ' + e); }
   var topic = props.getProperty('NTFY_TOPIC_' + person);
-  if (!topic) return false;
-  var headers = { Title: String(title).replace(/[^\x20-\x7E]/g, '').slice(0, 60) || 'Family EA', Tags: 'house' };
+  if (!topic || props.getProperty('NTFY_OFF') === '1') return sent;
+  var headers = { Title: title.replace(/[^\x20-\x7E]/g, '').slice(0, 60) || 'Family EA', Tags: 'house' };
   var appUrl = props.getProperty('APP_URL') || CFG.APP_URL;
   if (appUrl) headers.Click = appUrl;
+  var tok = ntfyToken_();
+  if (tok) headers.Authorization = 'Bearer ' + tok;
   try {
-    var res = UrlFetchApp.fetch('https://ntfy.sh/' + encodeURIComponent(topic), { method: 'post', payload: String(message).slice(0, 400), headers: headers, muteHttpExceptions: true });
-    return res.getResponseCode() < 300;
-  } catch (e) { log_('warn', 'ntfy failed: ' + e); return false; }
+    var res = UrlFetchApp.fetch('https://ntfy.sh/' + encodeURIComponent(topic), { method: 'post', payload: message, headers: headers, muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    if (code >= 300) log_('warn', 'ntfy ' + code + ': ' + String(res.getContentText()).slice(0, 120));
+    return sent + (code < 300 ? 1 : 0);
+  } catch (e) { log_('warn', 'ntfy failed: ' + e); return sent; }
+}
+
+/* ───────────────────────── Family EA's own phone alerts (Web Push, free) ─────────────────────────
+   The phone subscribes once ("Turn on alerts"). We send an empty, signed push; the app's service worker
+   then fetches the alert text from here with that person's key and shows it. No third-party service. */
+
+var PUSH_HOSTS_ = /^https:\/\/(web\.push\.apple\.com|fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[a-z0-9-]+\.notify\.windows\.com)\//;
+var EC_ = null;
+function ec_() {
+  if (EC_) return EC_;
+  var B = function (h) { return BigInt('0x' + h); };
+  EC_ = {
+    p: B('ffffffff00000001000000000000000000000000ffffffffffffffffffffffff'),
+    n: B('ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551'),
+    gx: B('6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'),
+    gy: B('4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5'),
+    Z: BigInt(0), O: BigInt(1), T: BigInt(2), H: BigInt(3), F: BigInt(4), E: BigInt(8)
+  };
+  return EC_;
+}
+function emod_(a, m) { var r = a % m; return r < ec_().Z ? r + m : r; }
+function einv_(a, m) {
+  var C = ec_(), lm = C.O, hm = C.Z, low = emod_(a, m), high = m;
+  while (low > C.O) { var r = high / low, nm = hm - lm * r, nw = high - low * r; hm = lm; high = low; lm = nm; low = nw; }
+  return emod_(lm, m);
+}
+function edbl_(P) {
+  var C = ec_(), p = C.p;
+  if (P[2] === C.Z) return P;
+  var delta = emod_(P[2] * P[2], p), gamma = emod_(P[1] * P[1], p), beta = emod_(P[0] * gamma, p);
+  var alpha = emod_(C.H * (P[0] - delta) * (P[0] + delta), p);
+  var x3 = emod_(alpha * alpha - C.E * beta, p);
+  var z3 = emod_((P[1] + P[2]) * (P[1] + P[2]) - gamma - delta, p);
+  var y3 = emod_(alpha * (C.F * beta - x3) - C.E * gamma * gamma, p);
+  return [x3, y3, z3];
+}
+function eadd_(P, Q) {
+  var C = ec_(), p = C.p;
+  if (P[2] === C.Z) return Q; if (Q[2] === C.Z) return P;
+  var z1z1 = emod_(P[2] * P[2], p), z2z2 = emod_(Q[2] * Q[2], p);
+  var u1 = emod_(P[0] * z2z2, p), u2 = emod_(Q[0] * z1z1, p);
+  var s1 = emod_(P[1] * Q[2] * z2z2, p), s2 = emod_(Q[1] * P[2] * z1z1, p);
+  if (u1 === u2) return s1 === s2 ? edbl_(P) : [C.O, C.O, C.Z];
+  var h = emod_(u2 - u1, p), i = emod_(C.T * h * C.T * h, p), j = emod_(h * i, p), r = emod_(C.T * (s2 - s1), p), v = emod_(u1 * i, p);
+  var x3 = emod_(r * r - j - C.T * v, p);
+  var y3 = emod_(r * (v - x3) - C.T * s1 * j, p);
+  var z3 = emod_(((P[2] + Q[2]) * (P[2] + Q[2]) - z1z1 - z2z2) * h, p);
+  return [x3, y3, z3];
+}
+function emul_(k) {
+  var C = ec_(), R = [C.O, C.O, C.Z], G = [C.gx, C.gy, C.O], bits = k.toString(2);
+  for (var i = 0; i < bits.length; i++) { R = edbl_(R); if (bits.charAt(i) === '1') R = eadd_(R, G); }
+  if (R[2] === C.Z) return null;
+  var zi = einv_(R[2], C.p), zi2 = emod_(zi * zi, C.p);
+  return [emod_(R[0] * zi2, C.p), emod_(R[1] * zi2 * zi, C.p)];
+}
+function hex64_(b) { var h = b.toString(16); while (h.length < 64) h = '0' + h; return h; }
+function hexBytes_(h) { var out = []; for (var i = 0; i < h.length; i += 2) { var v = parseInt(h.substr(i, 2), 16); out.push(v > 127 ? v - 256 : v); } return out; }
+function bytesHex_(a) { return a.map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join(''); }
+function b64u_(x) { return Utilities.base64EncodeWebSafe(x).replace(/=+$/, ''); }
+// 384 bits from Java's SecureRandom (via UUIDs), reduced into [1, n-1].
+function escalar_() {
+  var C = ec_(), h = '';
+  for (var i = 0; i < 4; i++) h += Utilities.getUuid().replace(/-/g, '');
+  return emod_(BigInt('0x' + h), C.n - C.O) + C.O;
+}
+function vapid_() {
+  var props = PropertiesService.getScriptProperties(), d = props.getProperty('VAPID_D'), pub = props.getProperty('VAPID_PUB');
+  if (d && pub) return { d: BigInt('0x' + d), pub: pub };
+  var k = escalar_(), P = emul_(k);
+  pub = b64u_(hexBytes_('04' + hex64_(P[0]) + hex64_(P[1])));
+  props.setProperty('VAPID_D', hex64_(k)); props.setProperty('VAPID_PUB', pub);
+  return { d: k, pub: pub };
+}
+/** ES256 signature (r||s, 64 bytes) over a UTF-8 string. */
+function es256_(text, d) {
+  var C = ec_();
+  var e = emod_(BigInt('0x' + bytesHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8))), C.n);
+  for (var tries = 0; tries < 8; tries++) {
+    var k = escalar_(), R = emul_(k); if (!R) continue;
+    var r = emod_(R[0], C.n); if (r === C.Z) continue;
+    var s = emod_(einv_(k, C.n) * (e + r * d), C.n); if (s === C.Z) continue;
+    return hexBytes_(hex64_(r) + hex64_(s));
+  }
+  throw new Error('sign failed');
+}
+function vapidHeader_(endpoint, v) {
+  var aud = endpoint.match(/^https:\/\/[^\/]+/)[0];
+  var head = b64u_(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  var claims = b64u_(JSON.stringify({ aud: aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'mailto:' + (Session.getEffectiveUser().getEmail() || 'adhome854@gmail.com') }));
+  var jwt = head + '.' + claims + '.' + b64u_(es256_(head + '.' + claims, v.d));
+  return 'vapid t=' + jwt + ', k=' + v.pub;
+}
+/** Phone says "send my alerts here" (or stop). Only real push services are accepted. */
+function handlePushSub_(person, body) {
+  var sub = body.sub || {}, ep = String(sub.endpoint || '');
+  if (!PUSH_HOSTS_.test(ep) || ep.length > 1000) return { ok: false, error: 'bad_endpoint' };
+  var existing = rows_('Pushes').filter(function (r) { return r.endpoint === ep; })[0];
+  if (body.op === 'remove') { if (existing) updateRow_('Pushes', 'id', existing.id, { status: 'off' }); return { ok: true }; }
+  var keys = sub.keys || {}, now = new Date().toISOString();
+  var row = { person: person, endpoint: ep, p256dh: String(keys.p256dh || '').slice(0, 200), auth: String(keys.auth || '').slice(0, 100), status: 'on', created: now, lastOk: '' };
+  if (existing) updateRow_('Pushes', 'id', existing.id, row); else { row.id = 'ps' + Utilities.getUuid().slice(0, 8); appendRow_('Pushes', row); }
+  return { ok: true, devices: devicesFor_(person) };
+}
+function devicesFor_(person) { return rows_('Pushes').filter(function (r) { return r.person === person && r.status === 'on'; }).length; }
+/** Sends an empty signed push to each of this person's phones. Returns how many accepted it. */
+function webPush_(person) {
+  var subs = rows_('Pushes').filter(function (r) { return r.person === person && r.status === 'on'; });
+  if (!subs.length) return 0;
+  var v = vapid_(), okN = 0;
+  subs.forEach(function (s) {
+    try {
+      var res = UrlFetchApp.fetch(s.endpoint, { method: 'post', payload: '', muteHttpExceptions: true,
+        headers: { Authorization: vapidHeader_(s.endpoint, v), TTL: '86400', Urgency: 'high' } });
+      var code = res.getResponseCode();
+      if (code >= 200 && code < 300) { okN++; updateRow_('Pushes', 'id', s.id, { lastOk: new Date().toISOString() }); }
+      else if (code === 404 || code === 410) updateRow_('Pushes', 'id', s.id, { status: 'gone' });
+      else log_('warn', 'web push ' + code + ': ' + String(res.getContentText()).slice(0, 200));
+    } catch (e) { log_('warn', 'web push failed: ' + e); }
+  });
+  return okN;
+}
+/** The phone's service worker asks: what should I show? (Only this person's, last 2 days.) */
+function alertsFor_(person, since) {
+  var cut = Math.max(Date.now() - 2 * 86400000, Date.parse(since) || 0);
+  return { ok: true, serverTime: new Date().toISOString(), alerts: rows_('Alerts').filter(function (a) { return a.person === person && (Date.parse(a.ts) || 0) > cut; })
+    .slice(-5).map(function (a) { return { id: a.id, ts: a.ts, title: a.title, body: a.body }; }) };
+}
+
+/** The free ntfy account token: NTFY_TOKEN, or any script property whose value is an ntfy token (tk_…). */
+function ntfyToken_() {
+  var props = PropertiesService.getScriptProperties(), t = props.getProperty('NTFY_TOKEN');
+  if (t) return String(t).trim();
+  var all = props.getProperties();
+  for (var k in all) if (/^tk_[A-Za-z0-9]{10,}$/.test(String(all[k]).trim())) return String(all[k]).trim();
+  return '';
+}
+
+/** Run from the editor to see why a phone alert isn't arriving. */
+function checkAlerts() {
+  var topic = PropertiesService.getScriptProperties().getProperty('NTFY_TOPIC_ayo');
+  if (!topic) { Logger.log('No alert channel for Ayo.'); return; }
+  var h = { Title: 'Family EA' }, tok = ntfyToken_();
+  if (tok) h.Authorization = 'Bearer ' + tok;
+  Logger.log(tok ? 'Using your ntfy account token.' : 'No ntfy token set (NTFY_TOKEN).');
+  var res = UrlFetchApp.fetch('https://ntfy.sh/' + encodeURIComponent(topic), { method: 'post', payload: 'Test alert from the editor.', headers: h, muteHttpExceptions: true });
+  Logger.log('ntfy replied ' + res.getResponseCode() + ': ' + String(res.getContentText()).slice(0, 300));
+}
+
+/* Short quotes and verses for the 8am alert (generated from app/quotes.js). */
+var ALERT_QUOTES = [
+  "“I can do all things through Christ which strengtheneth me.” — Philippians 4:13",
+  "“Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.” — Philippians 4:6",
+  "“And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.” — Philippians 4:7",
+  "“For I know the thoughts that I think toward you, saith the LORD, thoughts of peace, and not of evil, to give you an expected end.” — Jeremiah 29:11",
+  "“This is the day which the LORD hath made; we will rejoice and be glad in it.” — Psalm 118:24",
+  "“Be still, and know that I am God.” — Psalm 46:10",
+  "“The LORD is my shepherd; I shall not want.” — Psalm 23:1",
+  "“Weeping may endure for a night, but joy cometh in the morning.” — Psalm 30:5",
+  "“Delight thyself also in the LORD; and he shall give thee the desires of thine heart.” — Psalm 37:4",
+  "“The steps of a good man are ordered by the LORD: and he delighteth in his way.” — Psalm 37:23",
+  "“Be strong and of a good courage; be not afraid, neither be thou dismayed: for the LORD thy God is with thee whithersoever thou goest.” — Joshua 1:9",
+  "“Ask, and it shall be given you; seek, and ye shall find; knock, and it shall be opened unto you.” — Matthew 7:7",
+  "“What things soever ye desire, when ye pray, believe that ye receive them, and ye shall have them.” — Mark 11:24",
+  "“Take therefore no thought for the morrow: for the morrow shall take thought for the things of itself.” — Matthew 6:34",
+  "“Come unto me, all ye that labour and are heavy laden, and I will give you rest.” — Matthew 11:28",
+  "“In every thing give thanks: for this is the will of God in Christ Jesus concerning you.” — 1 Thessalonians 5:18",
+  "“And let us not be weary in well doing: for in due season we shall reap, if we faint not.” — Galatians 6:9",
+  "“A soft answer turneth away wrath: but grievous words stir up anger.” — Proverbs 15:1",
+  "“Pride goeth before destruction, and an haughty spirit before a fall.” — Proverbs 16:18",
+  "“Commit thy works unto the LORD, and thy thoughts shall be established.” — Proverbs 16:3",
+  "“Where there is no vision, the people perish.” — Proverbs 29:18",
+  "“For as he thinketh in his heart, so is he.” — Proverbs 23:7",
+  "“Keep thy heart with all diligence; for out of it are the issues of life.” — Proverbs 4:23",
+  "“The hand of the diligent maketh rich.” — Proverbs 10:4",
+  "“The blessing of the LORD, it maketh rich, and he addeth no sorrow with it.” — Proverbs 10:22",
+  "“A merry heart doeth good like a medicine: but a broken spirit drieth the bones.” — Proverbs 17:22",
+  "“Death and life are in the power of the tongue.” — Proverbs 18:21",
+  "“Iron sharpeneth iron; so a man sharpeneth the countenance of his friend.” — Proverbs 27:17",
+  "“Write the vision, and make it plain upon tables, that he may run that readeth it.” — Habakkuk 2:2",
+  "“Thou shalt also decree a thing, and it shall be established unto thee: and the light shall shine upon thy ways.” — Job 22:28",
+  "“Fear thou not; for I am with thee: be not dismayed; for I am thy God: I will strengthen thee; yea, I will help thee.” — Isaiah 41:10",
+  "“Thou wilt keep him in perfect peace, whose mind is stayed on thee: because he trusteth in thee.” — Isaiah 26:3",
+  "“Peace I leave with you, my peace I give unto you… Let not your heart be troubled, neither let it be afraid.” — John 14:27",
+  "“Two are better than one; because they have a good reward for their labour.” — Ecclesiastes 4:9",
+  "“To every thing there is a season, and a time to every purpose under the heaven.” — Ecclesiastes 3:1",
+  "“Whatsoever thy hand findeth to do, do it with thy might.” — Ecclesiastes 9:10",
+  "“Beloved, I wish above all things that thou mayest prosper and be in health, even as thy soul prospereth.” — 3 John 1:2",
+  "“Let all your things be done with charity.” — 1 Corinthians 16:14",
+  "“Be ye kind one to another, tenderhearted, forgiving one another.” — Ephesians 4:32",
+  "“Now faith is the substance of things hoped for, the evidence of things not seen.” — Hebrews 11:1",
+  "“And we know that all things work together for good to them that love God.” — Romans 8:28",
+  "“Be not conformed to this world: but be ye transformed by the renewing of your mind.” — Romans 12:2",
+  "“Gratitude is not only the greatest of virtues, but the parent of all the others.” — Cicero",
+  "“Gratitude is the memory of the heart.” — Jean-Baptiste Massieu",
+  "“Gratitude unlocks the fullness of life. It turns what we have into enough, and more.” — Melody Beattie",
+  "“Do not spoil what you have by desiring what you have not; remember that what you now have was once among the things you only hoped for.” — Epicurus",
+  "“He is a wise man who does not grieve for the things which he has not, but rejoices for those which he has.” — Epictetus",
+  "“Write it on your heart that every day is the best day in the year.” — Ralph Waldo Emerson",
+  "“Whatever the mind of man can conceive and believe, it can achieve.” — Napoleon Hill",
+  "“A man is literally what he thinks, his character being the complete sum of all his thoughts.” — James Allen",
+  "“Dreamers are the saviours of the world.” — James Allen",
+  "“All that we are is the result of what we have thought.” — The Dhammapada",
+  "“The soul becomes dyed with the colour of its thoughts.” — Marcus Aurelius",
+  "“If one advances confidently in the direction of his dreams… he will meet with a success unexpected in common hours.” — Henry David Thoreau",
+  "“Whether you think you can, or you think you can’t, you’re right.” — Henry Ford",
+  "“First say to yourself what you would be; and then do what you have to do.” — Epictetus",
+  "“Calmness of mind is one of the beautiful jewels of wisdom.” — James Allen",
+  "“We suffer more often in imagination than in reality.” — Seneca",
+  "“Men are disturbed not by things, but by the views which they take of things.” — Epictetus",
+  "“Very little is needed to make a happy life; it is all within yourself, in your way of thinking.” — Marcus Aurelius",
+  "“Hatred does not cease by hatred, but only by love. This is the eternal rule.” — The Dhammapada",
+  "“Knowing others is intelligence; knowing yourself is true wisdom.” — Lao Tzu",
+  "“He who knows that enough is enough will always have enough.” — Lao Tzu",
+  "“Rest is not idleness, and to lie sometimes on the grass under trees on a summer’s day… is by no means a waste of time.” — John Lubbock",
+  "“Almost everything will work again if you unplug it for a few minutes, including you.” — Anne Lamott",
+  "“The journey of a thousand miles begins with one step.” — Lao Tzu",
+  "“Waste no more time arguing about what a good man should be. Be one.” — Marcus Aurelius",
+  "“What stands in the way becomes the way.” — Marcus Aurelius",
+  "“While we are postponing, life speeds by.” — Seneca",
+  "“No man is free who is not master of himself.” — Epictetus",
+  "“Wealth consists not in having great possessions, but in having few wants.” — Epictetus",
+  "“Do what you can, with what you have, where you are.” — Theodore Roosevelt",
+  "“The best way out is always through.” — Robert Frost",
+  "“Our greatest glory is not in never falling, but in rising every time we fall.” — Oliver Goldsmith",
+  "“Knowing is not enough; we must apply. Willing is not enough; we must do.” — Johann Wolfgang von Goethe",
+  "“Life is like riding a bicycle. To keep your balance you must keep moving.” — Albert Einstein",
+  "“I learned that courage was not the absence of fear, but the triumph over it.” — Nelson Mandela",
+  "“Education is the most powerful weapon which you can use to change the world.” — Nelson Mandela",
+  "“Darkness cannot drive out darkness; only light can do that. Hate cannot drive out hate; only love can do that.” — Martin Luther King Jr.",
+  "“The beginning is the most important part of the work.” — Plato",
+  "“Well begun is half done.” — Aristotle",
+  "“Ever tried. Ever failed. No matter. Try again. Fail again. Fail better.” — Samuel Beckett",
+  "“If you want to go fast, go alone. If you want to go far, go together.” — African proverb",
+  "“However long the night, the dawn will break.” — African proverb",
+  "“Fall seven times, stand up eight.” — Japanese proverb",
+  "“The best time to plant a tree was twenty years ago. The second best time is now.” — Proverb"
+];
+
+function quoteOfDay_(now) {
+  if (!ALERT_QUOTES.length) return '';
+  var day = Math.floor((now.getTime() + 3600000) / 86400000);
+  return ALERT_QUOTES[day % ALERT_QUOTES.length];
 }
 
 /** Run once with your app's web address so tapping an alert opens the app. */
@@ -887,7 +1255,8 @@ function runTick_(now) {
     if (!keysFor_(p).length) return; // only people who use the app
     if (hour >= 8 && hour < 11 && meta['morning_' + p] !== day && meta['alerts_morning_' + p] !== '0') {
       var plan = planToday_(p, now);
-      push_(p, 'Your plan for today', plan.length ? plan.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') : 'Nothing urgent today. Jot anything new with + in Family EA.');
+      var q = quoteOfDay_(now);
+      push_(p, 'Your plan for today', (plan.length ? plan.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') : 'Nothing urgent today. Jot anything new with + in Family EA.') + (q ? '\n\n' + q : ''));
       setMeta_('morning_' + p, day);
     }
     if (hour >= 20 && hour < 23 && meta['evening_' + p] !== day && meta['alerts_evening_' + p] !== '0') {
