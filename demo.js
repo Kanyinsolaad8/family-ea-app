@@ -107,6 +107,24 @@
         });
       });
     },
+    report: function (id) {
+      var p = this.person;
+      return wait(500).then(function () {
+        var h = store.history.filter(function (x) { return x.id === id; })[0] || store.items.filter(function (x) { return x.id === id; })[0];
+        if (!h || !canSee(p, h.for)) return { ok: false, error: 'not_found' };
+        var it = store.items.filter(function (x) { return x.id === id; })[0] || {};
+        var blocks = [
+          { t: 'h', text: h.title },
+          { t: 'p', text: 'Sample report. In the live app this is the full email your EA sent, tidied up for your phone.' },
+          { t: 'li', text: h.outcome || h.summary || 'Outcome recorded by your EA.' },
+          { t: 'li', text: h.detail || 'Details as written in the email.' },
+          { t: 'p', text: 'Read more at the source.', links: [{ url: 'https://www.gov.uk/', text: 'GOV.UK' }] }
+        ];
+        return { ok: true, id: id, title: h.title, date: h.date || h.created, module: h.module, for: h.for, status: h.status || 'log',
+          summary: it.summary || '', detail: h.detail || '', outcome: h.outcome || '', due: it.due || '', why: (it.data && it.data.why) || '',
+          source: (it.data && it.data.source) || 'Demo', url: '', subject: h.title, blocks: blocks, hidden: h.module === 'intel' ? 2 : 0, related: [] };
+      });
+    },
     post: function (body) {
       var p = this.person;
       return wait(350).then(function () {

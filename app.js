@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -13,6 +13,14 @@
     set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
     del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
   };
+  // A tiny store the alert worker can read too (it can't see localStorage).
+  var IDB = {
+    open: function () { return new Promise(function (res, rej) { try { var r = indexedDB.open('fea', 1); r.onupgradeneeded = function () { r.result.createObjectStore('kv'); }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; } catch (e) { rej(e); } }); },
+    set: function (k, v) { return IDB.open().then(function (db) { return new Promise(function (res) { var tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = res; tx.onerror = res; }); }).catch(function () {}); }
+  };
+  function b64ToBytes(b) { var s = atob(String(b).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(b).length + 3) % 4)); var a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+  function pushSupported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+  function isIOS() { return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function safeUrl(u) { return /^https?:\/\//i.test(String(u || '')) ? String(u) : ''; }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -41,6 +49,8 @@
     }
     return 'tomorrow ' + runs[0][1];
   }
+  // "its 1pm run" today, or "tomorrow’s 9am run" after the last run.
+  function runWhen() { var r = nextRun(); return /^tomorrow /.test(r) ? 'tomorrow\u2019s ' + r.slice(9) + ' run' : 'its ' + r + ' run'; }
   // Reminder presets: one tap, no typing. [key, label, Date]
   function whenOptions() {
     var n = new Date(), out = [];
@@ -87,7 +97,11 @@
     clip: '<path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/>',
     doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
-    ext: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>'
+    ext: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+    drop: '<path d="M12 3c3.5 4.3 6 7.6 6 10.6A6 6 0 0 1 6 13.6C6 10.6 8.5 7.3 12 3z"/>',
+    spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+    shuffle: '<path d="M4 7h3c5 0 5 10 10 10h3"/><path d="M4 17h3c2 0 3-1.5 4-3.5M13 9.5C14 8 15 7 17 7h3"/><path d="M18 4l3 3-3 3M18 14l3 3-3 3"/>',
+    minus: '<path d="M5 12h14"/>'
   };
 
   /* ───────── state ───────── */
@@ -99,9 +113,11 @@
     sheet: null, sheetItem: null, sheetFresh: false, unlinkAsk: false,
     jotText: '', jotWhen: '', pickTime: '', listSeg: 'groceries', gText: '', showSnoozed: false, lastDone: 0,
     gHistory: LS.get('fea.gHistory', []),
-    prefs: Object.assign({ theme: 'auto', size: 'm', font: 'cambria', hc: false, rm: false }, LS.get('fea.prefs', {})),
+    prefs: Object.assign({ theme: 'auto', size: 'm', font: 'cambria', hc: false, rm: false, waterGoal: 8, game: '', quotes: true }, LS.get('fea.prefs', {})),
     pending: {}, syncing: false, offline: false, linkError: '', installHidden: LS.get('fea.installHidden', false),
-    chatSeen: LS.get('fea.chatSeen', ''), firstPaint: true
+    chatSeen: LS.get('fea.chatSeen', ''), firstPaint: true,
+    instant: LS.get('fea.instant', []), reports: {}, water: LS.get('fea.water', {}), challenge: null,
+    quoteIdx: Math.floor(Math.random() * 1000), pushOn: false
   };
   var TABS = [['today', 'Today'], ['lists', 'Lists'], ['houses', 'Houses'], ['plan', 'Plan'], ['intel', 'Intel'], ['history', 'History']];
   var AISLE_ORDER = ['Fruit & veg', 'Bakery', 'Meat & fish', 'Dairy & eggs', 'Cupboard', 'Frozen', 'Drinks', 'Household', 'Toiletries', 'Other'];
@@ -136,6 +152,10 @@
       if (S.demo) return window.FEA_DEMO.bootstrap();
       return fetch(CFG.API_URL + '?action=bootstrap&key=' + encodeURIComponent(S.key), { cache: 'no-store', redirect: 'follow' }).then(function (r) { return r.json(); });
     },
+    report: function (id) {
+      if (S.demo) return window.FEA_DEMO.report(id);
+      return fetch(CFG.API_URL + '?action=report&key=' + encodeURIComponent(S.key) + '&id=' + encodeURIComponent(id), { cache: 'no-store', redirect: 'follow' }).then(function (r) { return r.json(); });
+    },
     post: function (body) {
       if (S.demo) return window.FEA_DEMO.post(body);
       return fetch(CFG.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ key: S.key }, body)), redirect: 'follow' }).then(function (r) { return r.json(); });
@@ -167,7 +187,7 @@
       }
       S.person = res.person; S.name = res.name || PEOPLE[res.person] || 'You';
       accept(res);
-      if (!S.demo) LS.set('fea.cache', { res: res, at: new Date().toISOString() });
+      if (!S.demo) { LS.set('fea.cache', { res: res, at: new Date().toISOString() }); IDB.set('cfg', { key: S.key, api: CFG.API_URL, person: res.person }); }
       S.offline = false;
       var wasLink = S.mode !== 'app';
       S.mode = 'app';
@@ -290,6 +310,28 @@
     var files = S.files.slice();
     if (S.reading) { toast('Still preparing your files\u2026'); return; }
     if (!text && !files.length) return;
+    var route = files.length || S.ref ? 'action' : classify(text);
+    var gm = route === 'action' && text.match(/^(?:please\s+)?add\s+(.+?)\s+to\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?\.?$/i);
+    if (gm) {
+      var gl = gm[1].split(/\s*(?:,|\band\b)\s*/).filter(Boolean);
+      S.draft = '';
+      S.instant.push({ id: 'q' + Date.now(), ts: new Date().toISOString(), from: 'me', text: text, instant: true },
+        { id: 'a' + Date.now(), ts: new Date(Date.now() + 1).toISOString(), from: 'instant', text: 'Added to the shared shopping list: ' + gl.join(', ') + '.' });
+      saveInstant();
+      gl.forEach(function (g) { addGrocery(g); });
+      render(); return;
+    }
+    if (route === 'other' && builtIn(text) && answerInstantly(text)) { S.draft = ''; render(); return; }
+    if (route === 'jot') {
+      S.draft = '';
+      S.jotText = text.replace(/^remind me\s*(to\s+|about\s+)?/i, '').replace(/^./, function (c) { return c.toUpperCase(); });
+      S.pickTime = ''; S.jotWhen = new Date().getHours() < 18 ? 'eve' : 'tom';
+      render(); openSheet('jot');
+      toast('Pick a time and save. Your phone reminds you, no EA run needed.', { ms: 5000 });
+      return;
+    }
+    if ((route === 'lookup' || route === 'question') && answerInstantly(text)) { S.draft = ''; render(); return; }
+    var unanswered = route === 'question' || route === 'lookup';
     var tmp = { id: 'local-' + Date.now(), ts: new Date().toISOString(), from: 'me', text: text || ('Sent ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '.'), status: 'sending',
       files: files.map(function (f) { return { name: f.name, mime: f.mime, size: f.size, preview: f.preview }; }) };
     S.localMsgs = (S.localMsgs || []).concat([tmp]);
@@ -303,7 +345,10 @@
       (res.files || []).forEach(function (sf, k) { if (tmp.files[k]) tmp.files[k].url = sf.url; });
       S.localMsgs = S.localMsgs.filter(function (m) { return m !== tmp; });
       if (files.length) setTimeout(load, 300); // pull the new History entry
-      toast((files.length ? 'Sent with ' + files.length + ' file' + (files.length === 1 ? '' : 's') : 'Sent') + ' \u00b7 your EA replies around ' + nextRun());
+      if (unanswered) {
+        S.instant.push({ id: 'n' + Date.now(), ts: new Date(Date.now() + 1).toISOString(), from: 'instant', text: 'I couldn\u2019t find that in your last 6 months of history, so I\u2019ve passed it to your EA. It\u2019ll answer at ' + runWhen() + '.' });
+        saveInstant();
+      } else toast((files.length ? 'Sent with ' + files.length + ' file' + (files.length === 1 ? '' : 's') : 'Sent') + ' \u00b7 your EA does this at ' + runWhen());
     }).catch(function (e) {
       tmp.status = 'failed'; tmp.retryFiles = files; tmp.retryRef = ref;
       var why = { file_type: 'That file type can\u2019t be sent.', file_too_big: 'Files are too big. Try fewer at once.', too_many_files: 'Up to 5 files at a time.' }[e && e.message];
@@ -527,6 +572,7 @@
         '<div class="note">In Safari, tap Share, then “Add to Home Screen”. Open it from there and paste your key once more.</div>' +
         '<button class="btn small olive" data-act="copykey">Copy my key</button></section>');
     }
+    var qc = quoteCard(); if (qc) html.push(qc);
     // "Your 3 for today": the short answer to "what now?"
     var top = dueNotes().map(function (n) { return { note: n }; }).concat(all.map(function (x) { return { need: x }; })).slice(0, 3);
     var shownNeeds = top.filter(function (t) { return t.need; }).map(function (t) { return t.need; });
@@ -545,6 +591,7 @@
         return '<li><span class="num" aria-hidden="true">' + (k + 1) + '</span><button class="col linkcol" data-act="go" data-v="' + x.go + '"><span class="t">' + esc(x.title) + '</span><span class="s">' + esc(x.sub) + '</span></button>' +
           (x.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(x.id) + '">Later</button>' : '<span class="chev">' + svg(I.chev, 18) + '</span>') + '</li>';
       }).join('') + '</ol>' : '<div class="allclear" style="background:transparent;padding:4px 0">' + svg(I.check, 20) + 'Nothing urgent. Got a thought? Tap + to jot it down.</div>') + '</section>');
+    html.push(waterCard());
     var rest = S.who === 'all' ? list.filter(function (x) { return shownNeeds.indexOf(x) < 0; }) : list;
     html.push('<section class="tiles" aria-label="Who needs to act">' + tiles + '</section>');
     list = rest;
@@ -572,7 +619,7 @@
     var recent = S.data.history.slice(0, 4);
     html.push('<section class="stack"><div class="row-between"><h2 class="h2">Latest from your EA</h2><button class="textbtn" data-act="tab" data-v="history">Full history</button></div>' +
       (recent.length ? '<div class="list">' + recent.map(function (h) {
-        return '<button class="feed" data-act="histjump" data-id="' + esc(h.id) + '"><span class="when">' + esc(relWhen(h.date)) + '</span><span class="col" style="display:flex;flex-direction:column;gap:2px"><b style="font-size:.875rem">' + esc(h.title) + '</b><span class="note" style="font-size:.8125rem">' + esc(h.outcome) + '</span></span></button>';
+        return '<button class="feed" data-act="report" data-id="' + esc(h.id) + '"><span class="when">' + esc(relWhen(h.date)) + '</span><span class="col" style="display:flex;flex-direction:column;gap:2px"><b style="font-size:.875rem">' + esc(h.title) + '</b><span class="note" style="font-size:.8125rem">' + esc(h.outcome) + '</span></span></button>';
       }).join('') + '</div>' : '<div class="empty">Your EA’s updates will appear here after its next run.</div>') + '</section>');
     return html;
   }
@@ -807,28 +854,33 @@
       var g = shown.filter(function (h) { return monthKey(h.date) === m.key; });
       if (!g.length) return;
       html += '<section class="stack" style="gap:8px"><h2 class="h2">' + m.long + ' · ' + g.length + '</h2><div class="list">' + g.map(function (h) {
-        var w = owner(h.for), open = S.histOpen === h.id, x = d(h.date);
-        return '<div><button class="hrow" data-act="hopen" data-id="' + esc(h.id) + '" aria-expanded="' + open + '"><span class="obadge sm ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
+        var w = owner(h.for), x = d(h.date);
+        return '<button class="hrow" data-act="report" data-id="' + esc(h.id) + '"><span class="obadge sm ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
           '<span class="col"><span class="row-between" style="align-items:baseline"><span class="t">' + esc(h.title) + '</span><span class="dt">' + (x ? x.getDate() + ' ' + MON[x.getMonth()] : '') + '</span></span>' +
-          '<span class="o">' + esc(h.outcome) + '</span><span class="tags" style="margin-top:2px"><span class="tag t-mod">' + esc(AREAS[h.module] || 'Other') + '</span>' + ochip(h.for) + '</span></span></button>' +
-          '<div class="hdetail' + (open ? ' open' : '') + '"><div><div class="in">' + (h.detail ? '<div>' + esc(h.detail) + '</div>' : '') +
-          '<button class="btn small" style="align-self:flex-start" data-act="askabout" data-v="' + esc('About “' + h.title + '” (' + (x ? x.getDate() + ' ' + MON[x.getMonth()] : '') + '): ') + '">Ask EA about this</button></div></div></div></div>';
+          '<span class="o">' + esc(h.outcome) + '</span><span class="tags" style="margin-top:2px"><span class="tag t-mod">' + esc(AREAS[h.module] || 'Other') + '</span>' + ochip(h.for) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
       }).join('') + '</div></section>';
     });
     return html;
   }
 
   function ask() {
-    var msgs = S.data.messages.slice().sort(function (a, b) { return String(a.ts).localeCompare(String(b.ts)); });
-    var waiting = msgs.length && msgs[msgs.length - 1].from === 'me' && msgs[msgs.length - 1].status !== 'failed';
-    var html = ['<div class="bubbles">' + (msgs.length ? '' : '<div class="empty">Ask a question, give your EA a job, or tap the paperclip to send a photo or document. It replies here on its next run.</div>') + msgs.map(function (m) {
-      var me = m.from !== 'ea';
-      var meta = me ? (m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? 'Not sent' : m.status === 'answered' ? 'Answered' : 'Sent · reply around ' + nextRun()) : 'EA';
+    var msgs = S.data.messages.map(function (m) { return m; }).concat(S.instant || []).sort(function (a, b) { return String(a.ts).localeCompare(String(b.ts)); });
+    var eaMsgs = S.data.messages.slice().sort(function (a, b) { return String(a.ts).localeCompare(String(b.ts)); });
+    var lastEa = eaMsgs[eaMsgs.length - 1];
+    var waiting = lastEa && lastEa.from === 'me' && lastEa.status !== 'failed' && lastEa.status !== 'answered';
+    var html = ['<div class="bubbles">' + (msgs.length ? '' : '<div class="empty">Questions about your history, lists and what needs you are answered straight away. Jobs for your EA — apply, reply, book, anything timed — go to its next run: 9am, 1pm or 6pm.</div>') + msgs.map(function (m) {
       var att = (m.files || []).length ? '<div class="files">' + m.files.map(function (f) { return fileChip(f, false); }).join('') + '</div>' : '';
+      var res = (m.results || []).length ? '<div class="results">' + m.results.map(function (h) {
+        var x = d(h.date);
+        return '<button class="rcard" data-act="report" data-id="' + esc(h.id) + '"><span class="col"><span class="t">' + esc(h.title) + '</span><span class="s">' + esc((AREAS[h.module] || 'Update') + ' · ' + (x ? DOW[x.getDay()] + ' ' + x.getDate() + ' ' + MON[x.getMonth()] : '') + (h.outcome ? ' · ' + h.outcome : '')) + '</span></span><span class="chev">' + svg(I.chev, 16) + '</span></button>';
+      }).join('') + '</div>' : '';
+      if (m.from === 'instant') return '<div class="bub ea instant"><div class="b">' + esc(m.text) + '</div>' + res + '<span class="m">' + svg(I.spark, 12) + ' Instant answer · ' + esc(relWhen(m.ts)) + '</span></div>';
+      var me = m.from !== 'ea';
+      var meta = me ? (m.instant ? 'Answered instantly' : m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? 'Not sent' : m.status === 'answered' ? 'Done by your EA' : 'For your EA \u00b7 ' + runWhen().replace(/^its /, '')) : ('From your EA' + (runLabel(m.ts) ? '’s ' + runLabel(m.ts) : ''));
       return '<div class="bub ' + (me ? 'me' : 'ea') + '">' + att + '<div class="b">' + esc(m.text) + '</div><span class="m">' + esc(meta) + ' · ' + esc(relWhen(m.ts)) +
         (m.status === 'failed' ? ' <button class="textbtn" data-act="retry" data-id="' + esc(m.id) + '">Try again</button>' : '') + '</span></div>';
-    }).join('') + (waiting ? '<div class="bub ea"><div class="b typing" aria-label="Waiting for reply"><i></i><i></i><i></i></div></div>' : '') + '</div>',
-    '<div class="chips wrap" aria-label="Suggestions">' + ['What needs me today?', 'What needs both of us?', 'Summarise this week'].map(function (t) {
+    }).join('') + (waiting ? '<div class="runnote">' + svg(I.snooze, 14) + ' Your EA picks up jobs at ' + runWhen() + '. Questions get an instant answer.</div>' : '') + '</div>',
+    '<div class="chips wrap" aria-label="Suggestions">' + ['What needs me today?', 'What needs both of us?', 'Summarise this week', 'Latest intel', 'Shopping list'].map(function (t) {
       return '<button class="fchip" data-act="suggest" data-v="' + esc(t) + '">' + esc(t) + '</button>';
     }).join('') + '</div>'];
     return html;
@@ -865,6 +917,7 @@
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Text size</span>' + opts('size', [['m', 'Aa', 'font-size:.95rem'], ['l', 'Aa', 'font-size:1.2rem'], ['xl', 'Aa', 'font-size:1.45rem']]) + '</div>' +
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Font</span>' + opts('font', [['cambria', 'Cambria', "font-family:'Cambria Math',Cambria,'Iowan Old Style',Georgia,serif"], ['sans', 'Rounded', "font-family:Nunito,system-ui,sans-serif"], ['easy', 'Easy-read', "font-family:'Atkinson Hyperlegible',Verdana,sans-serif"]]) + '</div>' +
       '<div class="list">' + sw('hc', 'High contrast', 'Darker text and stronger edges') + sw('rm', 'Reduce motion', 'No slide or fade effects') + '</div>' +
+      wellnessSection() +
       alertsSection() +
       '<div class="stack" style="gap:8px">' + (S.demo ? '<button class="btn" data-act="exitdemo">Leave the demo</button>' :
         (S.unlinkAsk ? '<div class="note">Unlink this phone? You’ll need your key to link it again.</div><div class="btns"><button class="btn" data-act="unlinkno">Keep linked</button><button class="btn warn" data-act="unlinkyes">Unlink</button></div>'
@@ -872,18 +925,64 @@
       '<div class="note center" style="font-size:.75rem">Settings are saved on this phone only · v' + VERSION + '</div></div></div></div>';
   }
 
+  function wellnessSection() {
+    var p = S.prefs, g = p.game || ((CFG.GAMES || {})[S.person]) || 'puzzle';
+    function o(key, cur, list) { return '<div class="opts" role="radiogroup">' + list.map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (String(cur) === String(x[0])) + '" data-act="pref" data-k="' + key + '" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>'; }
+    return '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Wellness</span>' +
+      '<span class="note" style="font-size:.8125rem">Daily water goal</span>' + o('waterGoal', p.waterGoal, [['6', '6 glasses'], ['8', '8 glasses'], ['10', '10 glasses']]) +
+      '<span class="note" style="font-size:.8125rem">Each glass unlocks</span>' + o('game', g, [['puzzle', 'Brain puzzle'], ['french', 'French'], ['off', 'Nothing']]) +
+      '<div class="list"><button class="switch" role="switch" aria-checked="' + !!p.quotes + '" data-act="toggle" data-k="quotes"><span style="flex:1;display:flex;flex-direction:column;gap:2px"><b style="font-size:.9375rem">Quote or verse on Today</b><span class="note" style="font-size:.8125rem">A new one each time you open the app</span></span><span class="track" aria-hidden="true"><i></i></span></button></div></div>';
+  }
+
   function alertsSection() {
     var a = S.data.alerts || {};
     function asw(key, label, sub) {
       return '<button class="switch" role="switch" aria-checked="' + (a[key] !== false) + '" data-act="aprefs" data-k="' + key + '"><span style="flex:1;display:flex;flex-direction:column;gap:2px"><b style="font-size:.9375rem">' + label + '</b><span class="note" style="font-size:.8125rem">' + sub + '</span></span><span class="track" aria-hidden="true"><i></i></span></button>';
     }
+    var state;
+    if (S.demo) state = '<div class="note">Alerts are switched off in the demo.</div>';
+    else if (!pushSupported()) state = isIOS() && !isStandalone()
+      ? '<div class="note">Open Family EA from its <b>Home Screen icon</b>, then come back here to turn alerts on. iPhones only allow alerts from Home Screen apps.</div>'
+      : '<div class="note">This browser can\u2019t show Family EA alerts. On iPhone, use the Home Screen app.</div>';
+    else if (S.pushOn) state = '<div class="pushon">' + svg(I.check, 16) + ' Alerts are on for this ' + (isIOS() ? 'phone' : 'device') + '.</div>' +
+      '<div class="btns"><button class="btn" data-act="testalert">Send a test alert</button><button class="btn" data-act="pushoff">Turn off here</button></div>';
+    else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') state = '<div class="note">Notifications are blocked for Family EA. On iPhone: Settings \u203a Notifications \u203a Family EA \u203a Allow Notifications. Then try again.</div><button class="btn" data-act="pushon">Try again</button>';
+    else state = '<button class="btn big primary" data-act="pushon">' + svg(I.bell, 18) + 'Turn on alerts on this ' + (isIOS() ? 'phone' : 'device') + '</button><div class="note" style="font-size:.8125rem">Your phone will ask to allow notifications. Tap Allow.</div>';
     return '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Phone alerts</span>' +
-      '<div class="card pad stack" style="box-shadow:none;gap:10px"><b>' + svg(I.bell, 16) + ' Get reminders on your phone</b>' +
-      '<ol class="steps" style="font-size:.875rem"><li>Install the free <a href="https://ntfy.sh/docs/subscribe/phone/" target="_blank" rel="noopener">ntfy app</a> from the App Store.</li><li>In ntfy, tap <b>+</b>, paste your private channel below, and tap Subscribe.</li><li>Send yourself a test.</li></ol>' +
-      (a.topic ? '<div class="topic"><code>' + esc(a.topic) + '</code><button class="btn small" data-act="copytopic">Copy</button></div>' : '<div class="note">Your private channel appears here once the back end is set up.</div>') +
-      '<button class="btn" data-act="testalert"' + (a.topic ? '' : ' disabled') + '>Send a test alert</button>' +
-      '<div class="note" style="font-size:.75rem">Alerts show the task so you know what to do. Keep your channel name private.</div></div>' +
-      '<div class="list">' + asw('morning', 'Morning plan, 8am', 'Your 3 things for today') + asw('evening', 'Evening check, 8pm', 'Anything to jot down for tomorrow?') + '</div></div>';
+      '<div class="card pad stack" style="box-shadow:none;gap:10px"><b>' + svg(I.bell, 16) + ' Reminders from Family EA</b>' +
+      '<span class="note" style="font-size:.8125rem">Alerts come from the Family EA app itself and show the task, so you know what to do. Tap one to open the app.' + (a.devices ? ' On for ' + a.devices + ' device' + (a.devices === 1 ? '' : 's') + '.' : '') + '</span>' +
+      state + '</div>' +
+      '<div class="list">' + asw('morning', 'Morning plan, 8am', 'Your 3 things for today, plus a quote or verse') + asw('evening', 'Evening check, 8pm', 'Anything to jot down for tomorrow?') + '</div></div>';
+  }
+  function checkPush() {
+    if (S.demo || !pushSupported()) return Promise.resolve();
+    return navigator.serviceWorker.getRegistration().then(function (r) { return r ? r.pushManager.getSubscription() : null; })
+      .then(function (sub) { var on = !!sub && Notification.permission === 'granted'; if (on !== S.pushOn) { S.pushOn = on; if (S.sheet === 'settings') renderOverlay(); } }).catch(function () {});
+  }
+  function enablePush() {
+    var vapid = (S.data.alerts || {}).vapid;
+    if (!vapid) { toast('Alerts aren\u2019t ready yet. Pull to refresh and try again.'); return; }
+    var perm = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission();
+    Promise.resolve(perm).then(function (p) {
+      if (p !== 'granted') { toast('Notifications weren\u2019t allowed. You can change this in your phone\u2019s Settings.', { ms: 6000 }); renderOverlay(); return; }
+      return navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (old) { return old || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(vapid) }); });
+      }).then(function (sub) {
+        return IDB.set('seen', new Date().toISOString()).then(function () { return IDB.set('cfg', { key: S.key, api: CFG.API_URL, person: S.person }); })
+          .then(function () { return api.post({ type: 'pushsub', op: 'add', sub: sub.toJSON() }); });
+      }).then(function (r) {
+        if (!r || !r.ok) throw new Error(r && r.error);
+        S.pushOn = true; S.data.alerts.devices = r.devices; renderOverlay();
+        toast('Alerts are on. Send yourself a test.');
+      });
+    }).catch(function () { toast('Couldn\u2019t turn alerts on. Check your connection and try again.'); });
+  }
+  function disablePush() {
+    navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+      if (!sub) return;
+      var j = sub.toJSON();
+      return sub.unsubscribe().then(function () { return api.post({ type: 'pushsub', op: 'remove', sub: j }); });
+    }).then(function () { S.pushOn = false; renderOverlay(); toast('Alerts are off on this device.'); }, function () { toast('Couldn\u2019t turn alerts off. Try again.'); });
   }
 
   function linkScreen() {
@@ -907,6 +1006,241 @@
     return '<header class="top"><div class="skel" style="height:18px;width:40%"></div><div class="skel" style="height:30px;width:70%"></div></header><main>' +
       '<div class="tiles"><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div></div>' +
       '<div class="skel" style="height:220px"></div><div class="skel" style="height:160px"></div></main>';
+  }
+
+  /* ───────── instant answers (no waiting for a run) ───────── */
+  var MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+  function monthIndex(m) { return ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(String(m).slice(0, 3).toLowerCase()); }
+  var MOD_WORDS = {
+    intel: /\b(intel|brief|briefing|briefs|regulat\w*|fca|aml|fatf|sanctions?|crypto|compliance|fincrime)\b/i,
+    migration: /\b(migration|visa|immigration|ilr|settlement|home office|express entry|sponsor\w*)\b/i,
+    houses: /\b(house|houses|home|homes|property|properties|rent|rental|viewing|viewings|flat|tracker|letting)\b/i,
+    plan: /\b(plan|plans|calendar|event|events|clash|clashes|deadline|deadlines|appointment|appointments)\b/i,
+    commands: /\b(request|requests|command|commands)\b/i
+  };
+  var STOP = ('the a an and or of to in on at for from with about what whats which when where who why how did does do is are was were has have had any anything ' +
+    'me my our us we you your it its this that these those there their them they can could would should please tell show give find get pull open bring look up ' +
+    'last this next week month today yesterday report email item thing things one some all more summary summarise summarize said say sent send').split(' ');
+  function parseQuery(text) {
+    var t = String(text || '').toLowerCase(), now = new Date(), range = null, label = '', m;
+    function dayRange(y, mo, dd) { var a = new Date(y, mo, dd); var b = new Date(y, mo, dd, 23, 59, 59); return { from: a.getTime(), to: b.getTime(), day: true }; }
+    function fixYear(mo, dd) { var y = now.getFullYear(); if (new Date(y, mo, dd) > now) y--; return y; }
+    if ((m = t.match(new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?' + MONTH_RE + '\\b')))) { var mo = monthIndex(m[2]), dd = +m[1]; range = dayRange(fixYear(mo, dd), mo, dd); }
+    else if ((m = t.match(new RegExp('\\b' + MONTH_RE + '\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b')))) { var mo2 = monthIndex(m[1]), d2 = +m[2]; range = dayRange(fixYear(mo2, d2), mo2, d2); }
+    else if ((m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))) { var y3 = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : fixYear(+m[2] - 1, +m[1]); range = dayRange(y3, +m[2] - 1, +m[1]); }
+    else if (/\btoday\b/.test(t)) range = dayRange(now.getFullYear(), now.getMonth(), now.getDate());
+    else if (/\byesterday\b/.test(t)) { var yd = new Date(now.getTime() - 86400000); range = dayRange(yd.getFullYear(), yd.getMonth(), yd.getDate()); }
+    else if (/\bthis week\b/.test(t)) { var ws = dayStart(now); ws.setDate(ws.getDate() - ((ws.getDay() + 6) % 7)); range = { from: ws.getTime(), to: now.getTime() }; label = 'this week'; }
+    else if (/\blast week\b/.test(t)) { var lw = dayStart(now); lw.setDate(lw.getDate() - ((lw.getDay() + 6) % 7) - 7); range = { from: lw.getTime(), to: lw.getTime() + 7 * 86400000 - 1 }; label = 'last week'; }
+    else if (/\blast month\b/.test(t)) { var lm = new Date(now.getFullYear(), now.getMonth() - 1, 1); range = { from: lm.getTime(), to: new Date(now.getFullYear(), now.getMonth(), 1).getTime() - 1 }; label = 'last month'; }
+    else if (/\bthis month\b/.test(t)) { range = { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to: now.getTime() }; label = 'this month'; }
+    else if ((m = t.match(new RegExp('\\b(?:in|during|from)\\s+' + MONTH_RE + '\\b')))) { var mi = monthIndex(m[1]), yy = now.getFullYear(); if (mi > now.getMonth()) yy--; range = { from: new Date(yy, mi, 1).getTime(), to: new Date(yy, mi + 1, 1).getTime() - 1 }; label = 'in ' + MONTH[mi]; }
+    if (range && range.day) label = dayLabel(new Date(range.from).toISOString());
+    var mod = null;
+    Object.keys(MOD_WORDS).forEach(function (k) { if (!mod && MOD_WORDS[k].test(t)) mod = k; });
+    var words = t.replace(new RegExp(MONTH_RE, 'g'), ' ').replace(/[^a-z0-9À-ſ]+/g, ' ').split(' ').filter(function (w) {
+      return w.length >= 3 && STOP.indexOf(w) < 0 && !/^\d+(st|nd|rd|th)?$/.test(w) && !Object.keys(MOD_WORDS).some(function (k) { return MOD_WORDS[k].test(w); });
+    });
+    return { range: range, label: label, mod: mod, words: words };
+  }
+  function searchHistory(pq, widen) {
+    var hist = S.data.history.filter(function (h) { return canSee(h.for); });
+    var r = pq.range, pad = widen ? 3 * 86400000 : 0;
+    return hist.map(function (h) {
+      var t = Date.parse(h.date) || 0, score = 0;
+      if (r) { if (t < r.from - pad || t > r.to + pad) return null; score += 5; }
+      if (pq.mod) { if (h.module !== pq.mod) return null; score += 3; }
+      var title = String(h.title).toLowerCase(), rest = (String(h.outcome) + ' ' + String(h.detail || '')).toLowerCase();
+      pq.words.forEach(function (w) { if (title.indexOf(w) > -1) score += 2; else if (rest.indexOf(w) > -1) score += 1; });
+      if (!r && !pq.mod && score === 0) return null;
+      return { h: h, score: score, t: t };
+    }).filter(Boolean).sort(function (a, b) { return b.score - a.score || b.t - a.t; }).slice(0, 5).map(function (x) { return x.h; });
+  }
+  function classify(text) {
+    var t = String(text || '').trim().toLowerCase(), pq = parseQuery(t);
+    var lookupish = !!(pq.range || pq.mod);
+    if (/^remind me\b/.test(t)) return 'jot';
+    if (/^(find|show|pull up|get|open|bring up|look up|look for|search|tell me about|give me|what about|any news on|latest|last|recent|newest)\b/.test(t) && lookupish) return 'lookup';
+    if (/^(please\s+)?(can you\s+|could you\s+|will you\s+)?(apply|submit|reply|respond|email|send|book|schedule|add|put|cancel|move|reschedule|approve|skip|never|contact|call|ring|draft|write|update|change|delete|pay|order|buy|chase|follow up|set up|arrange|research|find|look into|check|compare|organi[sz]e|sort|prepare|make|create|renew|sign)\b/.test(t)) return 'action';
+    if (/^(what|when|which|where|who|why|how|did|do|does|is|are|was|were|has|have|had|any|anything|summar|recap|list|show|tell|give)\b/.test(t) || /\?\s*$/.test(t)) return 'question';
+    if (lookupish && t.split(/\s+/).length <= 8) return 'lookup';
+    return 'other';
+  }
+  function needsLine(x) { return x.title + (x.sub ? ' — ' + x.sub : ''); }
+  function builtIn(t) {
+    t = t.toLowerCase();
+    var all = needs();
+    if (/needs? (both|the two) of us|for both of us|needs us both/.test(t)) {
+      var b = all.filter(function (x) { return x.owner === 'both'; });
+      return { text: b.length ? 'These need you both:\n' + b.map(function (x, i) { return (i + 1) + '. ' + needsLine(x); }).join('\n') : 'Nothing needs you both right now.' };
+    }
+    if (/what needs me|needs my attention|on my plate|what (do|should) i (do|focus)|my (3|three) for today|to ?do today/.test(t)) {
+      var mine = dueNotes().map(function (n) { return n.text + ' (reminder)'; }).concat(all.map(needsLine));
+      return { text: mine.length ? 'Here’s what needs you:\n' + mine.slice(0, 8).map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') + (mine.length > 8 ? '\n…and ' + (mine.length - 8) + ' more on Today.' : '') : 'Nothing needs you right now. Enjoy the breather.' };
+    }
+    if (/grocer|shopping( list)?|what do we need to buy/.test(t)) {
+      var g = S.data.groceries.filter(function (x) { return !x.ticked; });
+      return { text: g.length ? 'On the shopping list (' + g.length + '):\n' + g.map(function (x) { return '• ' + x.name + (x.qty ? ' × ' + x.qty : ''); }).join('\n') : 'The shopping list is empty.' };
+    }
+    if (/\b(my )?(jots|notes|reminders)\b/.test(t) && !/^remind me/.test(t)) {
+      var n = openNotes();
+      return { text: n.length ? 'Your jots (' + n.length + '):\n' + n.map(function (x) { return '• ' + x.text + (x.remindAt ? ' — ' + whenLabel(x.remindAt) : ''); }).join('\n') : 'You have no open jots.' };
+    }
+    if (/summar|recap|what happened|catch me up/.test(t)) {
+      var pq = parseQuery(t); if (!pq.range) pq = parseQuery('this week');
+      var full = S.data.history.filter(function (h) { var x = Date.parse(h.date) || 0; return canSee(h.for) && x >= pq.range.from && x <= pq.range.to && (!pq.mod || h.module === pq.mod); });
+      if (!full.length) return { text: 'Nothing from your EA ' + (pq.label || 'in that time') + ' yet.' };
+      var by = {};
+      full.forEach(function (h) { (by[h.module] = by[h.module] || []).push(h); });
+      return { text: 'Here’s ' + (pq.label || 'that period') + ' (' + full.length + ' update' + (full.length === 1 ? '' : 's') + '):\n' + Object.keys(by).map(function (k) { return (AREAS[k] || 'Other') + ': ' + by[k].length; }).join(' · '), results: full.slice(0, 5) };
+    }
+    return null;
+  }
+  function saveInstant() { S.instant = S.instant.slice(-80); LS.set('fea.instant', S.instant); }
+  function answerInstantly(text) {
+    var now = new Date().toISOString();
+    var mine = { id: 'q' + Date.now(), ts: now, from: 'me', text: text, instant: true };
+    var built = builtIn(text);
+    var reply;
+    if (built) reply = { text: built.text, results: (built.results || []).map(slimHist) };
+    else {
+      var pq = parseQuery(text), res = searchHistory(pq), near = false;
+      if (!res.length && pq.range) { res = searchHistory(pq, true); near = res.length > 0; }
+      if (res.length) {
+        var what = pq.mod ? (AREAS[pq.mod] || 'Updates') : 'Updates';
+        reply = { text: (near ? 'Nothing on ' + pq.label + ' exactly. The closest ' + what.toLowerCase() + ':' : (pq.label ? what + ' from ' + pq.label + ':' : pq.mod ? 'Latest ' + what.toLowerCase() + ':' : 'Here’s what I found in your history:')) + '\nTap one to see the full breakdown.', results: res.map(slimHist) };
+      }
+    }
+    if (!reply) return false;
+    S.instant.push(mine, { id: 'a' + Date.now(), ts: new Date(Date.now() + 1).toISOString(), from: 'instant', text: reply.text, results: reply.results || [] });
+    saveInstant();
+    return true;
+  }
+  function slimHist(h) { return { id: h.id, title: h.title, date: h.date, outcome: h.outcome, module: h.module, for: h.for }; }
+  // Which scheduled run an EA reply came from, e.g. "1pm run".
+  function runLabel(ts) {
+    var x = d(ts); if (!x) return '';
+    var runs = CFG.EA_RUNS || [['08:47', '9am'], ['12:47', '1pm'], ['17:47', '6pm']], mins = x.getHours() * 60 + x.getMinutes(), best = '';
+    runs.forEach(function (r) { var hm = r[0].split(':'), st = +hm[0] * 60 + +hm[1]; if (mins >= st && mins - st < 180) best = r[1] + ' run'; });
+    return best;
+  }
+
+  /* ───────── report breakdown (tap a History item) ───────── */
+  function openReport(id) {
+    S.sheet = 'report'; S.sheetItem = { id: id }; S.sheetFresh = true; renderOverlay();
+    if (S.reports[id] && S.reports[id].ok) return;
+    S.reports[id] = { loading: true };
+    api.report(id).then(function (r) { S.reports[id] = r && r.ok ? r : { error: (r && r.error) || 'failed' }; }, function () { S.reports[id] = { error: 'offline' }; })
+      .then(function () { if (S.sheet === 'report' && S.sheetItem && S.sheetItem.id === id) renderOverlay(); });
+  }
+  function reportBlocks(blocks) {
+    var out = '', inList = false;
+    (blocks || []).forEach(function (b) {
+      var links = (b.links || []).map(function (l) { var u = safeUrl(l.url); return u ? '<a class="rlink" href="' + esc(u) + '" target="_blank" rel="noopener">' + svg(I.ext, 14) + esc(String(l.text || 'Open link').slice(0, 60)) + '</a>' : ''; }).join('');
+      if (b.t === 'li') { if (!inList) { out += '<ul class="rlist">'; inList = true; } out += '<li>' + esc(b.text) + links + '</li>'; return; }
+      if (inList) { out += '</ul>'; inList = false; }
+      out += b.t === 'h' ? '<h3 class="rh">' + esc(b.text) + '</h3>' + links : '<p class="rp">' + esc(b.text) + (links ? '<span class="rlinks">' + links + '</span>' : '') + '</p>';
+    });
+    if (inList) out += '</ul>';
+    return out;
+  }
+  function reportSheet() {
+    var id = (S.sheetItem || {}).id, h = S.data.history.filter(function (x) { return x.id === id; })[0] || {};
+    var r = S.reports[id] || { loading: true }, x = d(r.date || h.date), base = r.ok ? r : h;
+    var glance = uniqLines([base.outcome, base.summary, base.detail]);
+    var head = '<div class="row-between"><span class="tags"><span class="tag t-mod">' + esc(AREAS[base.module] || 'Other') + '</span>' + (base.for ? ochip(base.for) : '') + '</span><button class="textbtn" data-act="closesheet">Close</button></div>' +
+      '<div class="stack" style="gap:4px"><h2 style="margin:0;font-size:1.3rem;line-height:1.25">' + esc(base.title || 'Report') + '</h2><span class="note" style="font-size:.8125rem">' + (x ? esc(DOW[x.getDay()] + ' ' + x.getDate() + ' ' + MONTH[x.getMonth()] + ' ' + x.getFullYear() + ' · ' + hhmm(x.toISOString())) : '') + (r.subject && r.subject !== base.title ? ' · ' + esc(r.subject) : '') + '</span></div>';
+    var body = '<section class="card pad stack rglance"><span class="h2" style="font-size:.75rem;color:var(--olive)">At a glance</span>' +
+      (glance.length ? glance.map(function (g) { return '<p class="rp">' + esc(g) + '</p>'; }).join('') : '<p class="note">No summary was saved for this one.</p>') +
+      (r.why ? '<div class="why"><b>Why this matters to you</b><span>' + esc(r.why) + '</span></div>' : '') +
+      (r.due ? '<p class="note" style="font-size:.8125rem">' + svg(I.plan, 14) + ' Due ' + esc(whenLabel(r.due)) + '</p>' : '') +
+      (r.source ? '<p class="note" style="font-size:.8125rem">Source: ' + esc(r.source) + '</p>' : '') +
+      (safeUrl(r.url) ? '<a class="btn small" href="' + esc(safeUrl(r.url)) + '" target="_blank" rel="noopener">' + svg(I.ext, 16) + 'Open the source</a>' : '') + '</section>';
+    if (r.loading) body += '<section class="stack" aria-label="Loading the full report"><div class="skel" style="height:16px;width:60%"></div><div class="skel" style="height:14px"></div><div class="skel" style="height:14px;width:85%"></div><div class="skel" style="height:14px;width:70%"></div></section>';
+    else if (r.error) body += '<div class="note">' + (r.error === 'offline' ? 'You’re offline, so only the summary is shown.' : 'The full email isn’t available for this one, so only the summary is shown.') + '</div>';
+    else {
+      if ((r.blocks || []).length) body += '<section class="stack rfull"><span class="h2" style="font-size:.75rem">The full report</span>' + reportBlocks(r.blocks) + '</section>';
+      if (r.hidden) body += '<div class="note" style="font-size:.8125rem">Parts of this email meant for someone else are left out.</div>';
+      if ((r.related || []).length) body += '<section class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Also in this email</span><div class="list">' + r.related.map(function (o) {
+        return '<button class="rowbtn" data-act="report" data-id="' + esc(o.id) + '"><span class="col"><span class="t">' + esc(o.title) + '</span><span class="s">' + esc(o.summary || '') + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
+      }).join('') + '</div></section>';
+    }
+    var askText = 'About “' + (base.title || '') + '” (' + (x ? x.getDate() + ' ' + MON[x.getMonth()] : '') + '): ';
+    body += '<div class="btns"><button class="btn" data-act="askabout" data-v="' + esc(askText) + '">' + svg(I.chat, 18) + 'Ask EA about this</button>' + (findItem(id) ? '<button class="btn primary" data-act="openitem" data-id="' + esc(id) + '">Go to it</button>' : '') + '</div>';
+    return sheetWrap('Report', head + body);
+  }
+  function uniqLines(list) { var seen = {}; return list.map(function (x) { return String(x || '').trim(); }).filter(function (x) { var k = x.toLowerCase(); if (!x || seen[k]) return false; seen[k] = 1; return true; }); }
+
+  /* ───────── quotes, water and mini challenges ───────── */
+  var QUOTES = window.FEA_QUOTES || [];
+  function quoteCard() {
+    if (!S.prefs.quotes || !QUOTES.length) return '';
+    var q = QUOTES[S.quoteIdx % QUOTES.length];
+    return '<section class="card pad quote" aria-label="Thought for today"><div class="row-between"><span class="h2" style="font-size:.7rem;color:var(--olive)">' + svg(I.leaf, 13) + ' ' + esc(q.k || 'Thought') + '</span>' +
+      '<button class="textbtn" data-act="newquote" aria-label="Show another quote">' + svg(I.shuffle, 16) + '</button></div>' +
+      '<blockquote><p>“' + esc(q.t) + '”</p><footer>' + esc(q.a) + '</footer></blockquote></section>';
+  }
+  function todayKey() { var n = new Date(); return n.getFullYear() + '-' + pad(n.getMonth() + 1) + '-' + pad(n.getDate()); }
+  function waterGoal() { return +S.prefs.waterGoal || 8; }
+  function glasses(k) { return +(S.water[k || todayKey()] || 0); }
+  function waterStreak() {
+    var goal = waterGoal(), n = 0, x = new Date();
+    if (glasses() < goal) x.setDate(x.getDate() - 1); // today still counts if not finished yet
+    for (var i = 0; i < 400; i++) {
+      var k = x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate());
+      if (+(S.water[k] || 0) >= goal) { n++; x.setDate(x.getDate() - 1); } else break;
+    }
+    return n;
+  }
+  function gameKind() { var g = S.prefs.game || ((CFG.GAMES || {})[S.person]) || 'puzzle'; return g; }
+  function gameState(kind) { return LS.get('fea.game.' + kind, { level: 1, run: 0, played: 0, correct: 0, best: 1 }); }
+  function waterCard() {
+    var goal = waterGoal(), have = glasses(), streak = waterStreak(), kind = gameKind();
+    var drops = ''; for (var i = 0; i < goal; i++) drops += '<span class="drop' + (i < have ? ' full' : '') + '" aria-hidden="true">' + svg(I.drop, 18) + '</span>';
+    var gs = kind !== 'off' && window.FEA_GAMES ? gameState(kind) : null;
+    return '<section class="card pad stack water" aria-label="Water today"><div class="row-between"><b>' + svg(I.drop, 16) + ' Water</b><span class="note" style="font-size:.8125rem">' + (streak ? streak + '-day streak' : 'Start a streak today') + '</span></div>' +
+      '<div class="drops" role="img" aria-label="' + have + ' of ' + goal + ' glasses">' + drops + '</div>' +
+      '<div class="wrow"><button class="btn small olive" data-act="waterplus">' + svg(I.plus, 16) + 'Add a glass</button>' +
+      '<button class="btn small" data-act="waterminus" aria-label="Take one glass off"' + (have ? '' : ' disabled') + '>' + svg(I.minus, 16) + '</button>' +
+      '<span class="wcount"><b>' + have + '</b> of ' + goal + ' glasses' + (have >= goal ? ' \u00b7 goal met' : '') + '</span></div>' +
+      (gs ? '<div class="note" style="font-size:.8125rem">Each glass unlocks a quick ' + (kind === 'french' ? 'French challenge' : 'brain puzzle') + ' · level ' + gs.level + '</div>' : '') + '</section>';
+  }
+  function addGlass() {
+    var k = todayKey(), goal = waterGoal();
+    S.water[k] = glasses() + 1;
+    var keep = {}; Object.keys(S.water).sort().slice(-400).forEach(function (x) { keep[x] = S.water[x]; }); S.water = keep;
+    LS.set('fea.water', S.water);
+    if (S.water[k] === goal) toast('Water goal met. Well done!');
+    var kind = gameKind();
+    if (kind !== 'off' && window.FEA_GAMES) startChallenge(kind); else render();
+  }
+  function startChallenge(kind) {
+    var gs = gameState(kind);
+    S.challenge = { c: window.FEA_GAMES.make(kind, gs.level), picked: null };
+    S.sheet = 'challenge'; S.sheetItem = null; S.sheetFresh = true;
+    render(); renderOverlay();
+  }
+  function answerChallenge(choice) {
+    var ch = S.challenge; if (!ch || ch.picked !== null) return;
+    ch.picked = choice;
+    var right = choice === ch.c.a, kind = ch.c.kind;
+    var before = gameState(kind), after = window.FEA_GAMES.next(before, kind, right);
+    LS.set('fea.game.' + kind, after);
+    ch.levelUp = after.level > before.level; ch.levelDown = after.level < before.level; ch.right = right;
+    renderOverlay();
+  }
+  function challengeSheet() {
+    var ch = S.challenge; if (!ch) return '';
+    var c = ch.c, kind = c.kind, gs = gameState(kind), have = glasses();
+    var opts = '<div class="copts">' + c.o.map(function (o) {
+      var cls = ch.picked === null ? '' : o === c.a ? ' right' : o === ch.picked ? ' wrong' : ' dim';
+      return '<button class="copt' + cls + '" data-act="canswer" data-v="' + esc(o) + '"' + (ch.picked !== null ? ' aria-disabled="true"' : '') + '>' + esc(o) + '</button>';
+    }).join('') + '</div>';
+    var fb = ch.picked === null ? '' : '<div class="cfb ' + (ch.right ? 'ok' : 'no') + '" role="status"><b>' + (ch.right ? 'Correct!' : 'Not quite.') + '</b> ' + esc(c.why) +
+      (ch.levelUp ? '<br><b>Level up: now level ' + gs.level + '.</b>' : ch.levelDown ? '<br>Back to level ' + gs.level + ' for a moment.' : '') + '</div>';
+    return sheetWrap('Mini challenge', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.drop, 14) + ' Glass ' + have + ' of ' + waterGoal() + ' · ' + esc(window.FEA_GAMES.kinds[kind]) + ' · level ' + c.level + '</span><button class="textbtn" data-act="closesheet">' + (ch.picked === null ? 'Skip' : 'Close') + '</button></div>' +
+      '<h2 class="cq">' + esc(c.q) + '</h2>' + opts + fb +
+      (ch.picked !== null ? '<div class="btns"><button class="btn" data-act="cmore">One more</button><button class="btn primary" data-act="closesheet">Done</button></div><div class="note center" style="font-size:.75rem">' + gs.correct + ' right out of ' + gs.played + ' so far · best level ' + gs.best + '</div>' : ''));
   }
 
   /* ───────── render ───────── */
@@ -954,7 +1288,7 @@
   function renderOverlay() {
     if (S.mode !== 'app' || !S.sheet) { overlay.innerHTML = ''; return; }
     var focusId = document.activeElement && overlay.contains(document.activeElement) ? document.activeElement.id : '';
-    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : snoozeSheet();
+    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : snoozeSheet();
     S.sheetFresh = false;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
@@ -1003,7 +1337,7 @@
       case 'planact': item = findItem(id); if (item) queueAction(item, v, el.getAttribute('data-label') || v); break;
       case 'undo': cancelAction(id); toastEl.classList.remove('show'); break;
       case 'read': item = findItem(id); if (item) toggleRead(item); break;
-      case 'askabout': S.draft = v; setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) { c.focus(); c.setSelectionRange(c.value.length, c.value.length); } }, 60); break;
+      case 'askabout': if (S.sheet) closeSheet(); S.draft = v; setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) { c.focus(); c.setSelectionRange(c.value.length, c.value.length); } }, 60); break;
       case 'suggest': S.draft = v; render(); var ci = document.getElementById('chat-input'); if (ci) ci.focus(); break;
       case 'retry':
         var m = S.data.messages.filter(function (x) { return x.id === id; })[0];
@@ -1033,8 +1367,17 @@
         document.querySelectorAll('.hdetail.open').forEach(function (x) { if (x !== det) { x.classList.remove('open'); x.previousElementSibling.setAttribute('aria-expanded', 'false'); } });
         if (det) { det.classList.toggle('open', S.histOpen === id); el.setAttribute('aria-expanded', S.histOpen === id); }
         break;
-      case 'histjump': S.histOpen = id; S.month = 'all'; S.mod = 'all'; S.hq = ''; setTab('history'); break;
-      case 'settings': openSheet('settings'); var first = overlay.querySelector('.sheet button'); if (first) first.focus({ preventScroll: true }); break;
+      case 'histjump': case 'report': openReport(id); break;
+      case 'openitem':
+        item = findItem(id); closeSheet();
+        if (item) { if (item.module === 'intel' || item.module === 'migration') { S.seg = item.module === 'migration' ? 'migration' : 'mine'; setTab('intel'); } else setTab({ houses: 'houses', plan: 'plan' }[item.module] || 'today'); }
+        break;
+      case 'newquote': S.quoteIdx = (S.quoteIdx + 1 + Math.floor(Math.random() * Math.max(1, QUOTES.length - 1))) % Math.max(1, QUOTES.length); render(); break;
+      case 'waterplus': addGlass(); break;
+      case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); render(); } break;
+      case 'canswer': answerChallenge(v); break;
+      case 'cmore': startChallenge(S.challenge ? S.challenge.c.kind : gameKind()); break;
+      case 'settings': checkPush(); openSheet('settings'); var first = overlay.querySelector('.sheet button'); if (first) first.focus({ preventScroll: true }); break;
       case 'closesettings': case 'closesheet': closeSheet(); break;
       case 'jot':
         S.jotText = ''; S.pickTime = ''; S.jotWhen = new Date().getHours() < 18 ? 'eve' : 'tom';
@@ -1058,16 +1401,18 @@
       case 'gremove': groceryOp(id, 'remove'); break;
       case 'gclear': groceryOp(null, 'clear'); break;
       case 'gagain': addGrocery(v); break;
+      case 'pushon': enablePush(); break;
+      case 'pushoff': disablePush(); break;
       case 'copytopic': copyText(S.data.alerts.topic, 'Channel copied. Paste it in the ntfy app.'); break;
       case 'testalert':
-        api.post({ type: 'testalert' }).then(function (r) { toast(r && r.ok ? 'Test sent. Check your phone.' : 'Couldn\u2019t send. Is ntfy subscribed to your channel?'); }, function () { toast('Couldn\u2019t send. Check your connection.'); });
+        api.post({ type: 'testalert' }).then(function (r) { toast(r && r.ok ? 'Test sent. It should pop up in a few seconds.' : 'Couldn\u2019t send. Turn alerts off and on again here.'); }, function () { toast('Couldn\u2019t send. Check your connection.'); });
         break;
       case 'aprefs':
         var ak = el.getAttribute('data-k'); S.data.alerts[ak] = S.data.alerts[ak] === false; renderOverlay();
         var pb = { type: 'prefs' }; pb[ak] = S.data.alerts[ak]; api.post(pb).catch(function () { toast('Couldn\u2019t save that. Try again.'); });
         break;
-      case 'pref': S.prefs[el.getAttribute('data-k')] = v; applyPrefs(); renderOverlay(); break;
-      case 'toggle': var k = el.getAttribute('data-k'); S.prefs[k] = !S.prefs[k]; applyPrefs(); renderOverlay(); break;
+      case 'pref': S.prefs[el.getAttribute('data-k')] = v; applyPrefs(); render(); renderOverlay(); break;
+      case 'toggle': var k = el.getAttribute('data-k'); S.prefs[k] = !S.prefs[k]; applyPrefs(); render(); renderOverlay(); break;
       case 'refresh': load(); break;
       case 'hideinstall': S.installHidden = true; LS.set('fea.installHidden', true); render(); break;
       case 'copykey':
@@ -1099,7 +1444,9 @@
 
   function unlink(msg) {
     flushPending();
-    LS.del('fea.key'); LS.del('fea.cache');
+    LS.del('fea.key'); LS.del('fea.cache'); LS.del('fea.instant'); S.instant = []; S.reports = {};
+    IDB.set('cfg', null);
+    if (pushSupported() && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { return r && r.pushManager.getSubscription(); }).then(function (sub) { if (sub) sub.unsubscribe(); }).catch(function () {});
     S.key = null; S.sheet = null; S.mode = 'link'; S.linkError = msg || '';
     S.data = { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], doneToday: 0, alerts: {} };
     render(true);
@@ -1143,7 +1490,7 @@
     var hashKey = (location.hash.match(/key=([A-Za-z0-9]+)/) || [])[1];
     if (hashKey && !S.key) { S.key = hashKey; LS.set('fea.key', hashKey); }
 
-    if (S.demo || (S.key && CFG.API_URL)) { S.mode = 'loading'; render(); load({ animate: true }); }
+    if (S.demo || (S.key && CFG.API_URL)) { S.mode = 'loading'; render(); load({ animate: true }).then(checkPush); }
     else { S.mode = 'link'; render(true); }
 
     if (window.FEA_DEMO) window.FEA_DEMO.onChange(function () { if (S.demo) load(); });
