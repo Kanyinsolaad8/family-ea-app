@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
