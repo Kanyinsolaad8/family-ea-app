@@ -952,7 +952,15 @@
       '<div class="card pad stack" style="box-shadow:none;gap:10px"><b>' + svg(I.bell, 16) + ' Reminders from Family EA</b>' +
       '<span class="note" style="font-size:.8125rem">Alerts come from the Family EA app itself and show the task, so you know what to do. Tap one to open the app.' + (a.devices ? ' On for ' + a.devices + ' device' + (a.devices === 1 ? '' : 's') + '.' : '') + '</span>' +
       state + '</div>' +
-      '<div class="list">' + asw('morning', 'Morning plan, 8am', 'Your 3 things for today, plus a quote or verse') + asw('evening', 'Evening check, 8pm', 'Anything to jot down for tomorrow?') + '</div></div>';
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Morning plan, 8am', 'Your 3 things for today, plus a quote or verse') + asw('evening', 'Evening check, 8pm', 'What\u2019s on tomorrow, and anything to jot down') + '</div></div>' +
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Gentle nudges \u00b7 only when useful, at most 3 a day</span><div class="list">' +
+      asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still open, 5pm', 'Only if something due today is left') +
+      asw('week', 'Week ahead, Sunday 6pm', 'What\u2019s coming up in the next 7 days') + asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Quiet hours</span><div class="opts" role="radiogroup">' + [['22-7', '10pm\u20137am'], ['21-8', '9pm\u20138am'], ['off', 'Off']].map(function (q) {
+        return '<button class="opt" role="radio" aria-checked="' + ((a.quiet || '22-7') === q[0]) + '" data-act="aquiet" data-v="' + q[0] + '">' + q[1] + '</button>'; }).join('') + '</div>' +
+      '<span class="note" style="font-size:.8125rem">Nothing buzzes in quiet hours. Reminders you set wait until they end.</span>' +
+      (a.paused ? '<button class="btn" data-act="apause" data-v="0">' + svg(I.bell, 16) + 'Nudges paused today \u00b7 Resume</button>' : '<button class="btn" data-act="apause" data-v="1">' + svg(I.snooze, 16) + 'Pause nudges for today</button>') +
+      '<span class="note" style="font-size:.75rem">Pausing keeps your own reminders. Everything else is quiet until tomorrow.</span></div></div>';
   }
   function checkPush() {
     if (S.demo || !pushSupported()) return Promise.resolve();
@@ -1205,11 +1213,17 @@
       '<span class="wcount"><b>' + have + '</b> of ' + goal + ' glasses' + (have >= goal ? ' \u00b7 goal met' : '') + '</span></div>' +
       (gs ? '<div class="note" style="font-size:.8125rem">Each glass unlocks a quick ' + (kind === 'french' ? 'French challenge' : 'brain puzzle') + ' · level ' + gs.level + '</div>' : '') + '</section>';
   }
+  var waterTimer;
+  function syncWater() {
+    if (S.demo) return;
+    clearTimeout(waterTimer);
+    waterTimer = setTimeout(function () { api.post({ type: 'prefs', waterLog: { day: todayKey(), n: glasses(), goal: waterGoal(), game: gameKind() } }).catch(function () {}); }, 1500);
+  }
   function addGlass() {
     var k = todayKey(), goal = waterGoal();
     S.water[k] = glasses() + 1;
     var keep = {}; Object.keys(S.water).sort().slice(-400).forEach(function (x) { keep[x] = S.water[x]; }); S.water = keep;
-    LS.set('fea.water', S.water);
+    LS.set('fea.water', S.water); syncWater();
     if (S.water[k] === goal) toast('Water goal met. Well done!');
     var kind = gameKind();
     if (kind !== 'off' && window.FEA_GAMES) startChallenge(kind); else render();
@@ -1374,7 +1388,7 @@
         break;
       case 'newquote': S.quoteIdx = (S.quoteIdx + 1 + Math.floor(Math.random() * Math.max(1, QUOTES.length - 1))) % Math.max(1, QUOTES.length); render(); break;
       case 'waterplus': addGlass(); break;
-      case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); render(); } break;
+      case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); syncWater(); render(); } break;
       case 'canswer': answerChallenge(v); break;
       case 'cmore': startChallenge(S.challenge ? S.challenge.c.kind : gameKind()); break;
       case 'settings': checkPush(); openSheet('settings'); var first = overlay.querySelector('.sheet button'); if (first) first.focus({ preventScroll: true }); break;
@@ -1407,11 +1421,13 @@
       case 'testalert':
         api.post({ type: 'testalert' }).then(function (r) { toast(r && r.ok ? 'Test sent. It should pop up in a few seconds.' : 'Couldn\u2019t send. Turn alerts off and on again here.'); }, function () { toast('Couldn\u2019t send. Check your connection.'); });
         break;
+      case 'aquiet': S.data.alerts.quiet = v; renderOverlay(); api.post({ type: 'prefs', quiet: v }).catch(function () { toast('Couldn\u2019t save that. Try again.'); }); break;
+      case 'apause': S.data.alerts.paused = v === '1'; renderOverlay(); api.post({ type: 'prefs', pause: v === '1' }).then(function () { toast(v === '1' ? 'Nudges paused for today. Your own reminders still come.' : 'Nudges back on.'); }, function () { toast('Couldn\u2019t save that. Try again.'); }); break;
       case 'aprefs':
         var ak = el.getAttribute('data-k'); S.data.alerts[ak] = S.data.alerts[ak] === false; renderOverlay();
         var pb = { type: 'prefs' }; pb[ak] = S.data.alerts[ak]; api.post(pb).catch(function () { toast('Couldn\u2019t save that. Try again.'); });
         break;
-      case 'pref': S.prefs[el.getAttribute('data-k')] = v; applyPrefs(); render(); renderOverlay(); break;
+      case 'pref': S.prefs[el.getAttribute('data-k')] = v; applyPrefs(); render(); renderOverlay(); if (/^(waterGoal|game)$/.test(el.getAttribute('data-k')) && glasses() + Object.keys(S.water).length) syncWater(); break;
       case 'toggle': var k = el.getAttribute('data-k'); S.prefs[k] = !S.prefs[k]; applyPrefs(); render(); renderOverlay(); break;
       case 'refresh': load(); break;
       case 'hideinstall': S.installHidden = true; LS.set('fea.installHidden', true); render(); break;

@@ -76,7 +76,7 @@
     ],
     snoozes: [],
     doneToday: 2,
-    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true },
+    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, water: true, open5: true, week: true, reply: true, quiet: '22-7', paused: false },
     messages: [
       { id: 'd1', ts: at(0, 8, 2), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
       { id: 'd2', ts: at(0, 12, 41), from: 'me', text: 'Book a viewing for the Yate house next week, after work.', status: 'answered' },
@@ -162,7 +162,7 @@
           if (body.op !== 'clear') store.snoozes.push({ itemId: body.itemId, until: body.until });
           return { ok: true };
         }
-        if (body.type === 'prefs') { if ('morning' in body) store.alerts.morning = !!body.morning; if ('evening' in body) store.alerts.evening = !!body.evening; return { ok: true }; }
+        if (body.type === 'prefs') { ['morning', 'evening', 'water', 'open5', 'week', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
         if (body.type === 'message') {
           var id = 'm' + Date.now();
