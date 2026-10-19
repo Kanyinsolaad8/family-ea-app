@@ -64,6 +64,10 @@ function doGet(e) {
   var p = (e && e.parameter) || {};
   try {
     if (p.action === 'ping') return json_({ ok: true, app: 'family-ea', time: new Date().toISOString() });
+    if (p.action === 'file' || p.action === 'files') {
+      if (!isTaskKey_(p.key)) return json_({ ok: false, error: 'bad_key' });
+      return json_(p.action === 'files' ? listFiles_() : readFile_(p.name));
+    }
     var person = personForKey_(p.key);
     if (!person) return json_({ ok: false, error: 'bad_key' });
     return json_(buildBootstrap_(person, new Date()));
@@ -76,6 +80,13 @@ function doGet(e) {
 function doPost(e) {
   var body;
   try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { return json_({ ok: false, error: 'bad_json' }); }
+  if (body.type === 'file') {
+    if (!isTaskKey_(body.key)) return json_({ ok: false, error: 'bad_key' });
+    var flock = LockService.getScriptLock();
+    try { flock.waitLock(20000); return json_(writeFile_(body.name, body.content, body.mode)); }
+    catch (err) { log_('error', 'file write: ' + err); return json_({ ok: false, error: 'server_error' }); }
+    finally { try { flock.releaseLock(); } catch (x) {} }
+  }
   var person = personForKey_(body.key);
   if (!person) return json_({ ok: false, error: 'bad_key' });
   var lock = LockService.getScriptLock();
@@ -99,6 +110,88 @@ function doPost(e) {
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ───────────────────────── Family EA files in Google Drive (for the scheduled tasks) ───────────────────────── */
+/* The scheduled tasks run in the cloud, so they keep their rules and logs here instead of on the Mac.
+   They use a separate task key; it can read and write these files only, never anyone's app data. */
+
+var FILES_FOLDER = 'Family EA Files';
+
+/** Run once: creates the task key and prints it to the log. */
+function setupTaskKey() {
+  var props = PropertiesService.getScriptProperties();
+  var k = props.getProperty('TASK_KEY');
+  if (!k) { k = 'task_' + (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').slice(0, 40); props.setProperty('TASK_KEY', k); }
+  filesFolder_();
+  Logger.log('Task key: ' + k);
+  return k;
+}
+
+function isTaskKey_(key) {
+  var k = PropertiesService.getScriptProperties().getProperty('TASK_KEY');
+  return !!k && typeof key === 'string' && key === k;
+}
+
+function filesFolder_() {
+  var it = DriveApp.getFoldersByName(FILES_FOLDER);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(FILES_FOLDER);
+}
+
+function safeFileName_(name) {
+  name = String(name || '').trim();
+  return /^[A-Za-z0-9][A-Za-z0-9 _.()-]{0,99}$/.test(name) && name.indexOf('..') < 0 ? name : '';
+}
+
+function findFile_(name) {
+  var it = filesFolder_().getFilesByName(name);
+  return it.hasNext() ? it.next() : null;
+}
+
+function readFile_(name) {
+  var n = safeFileName_(name);
+  if (!n) return { ok: false, error: 'bad_name' };
+  var f = findFile_(n);
+  if (!f) return { ok: false, error: 'not_found', name: n };
+  return { ok: true, name: n, content: f.getBlob().getDataAsString('UTF-8'), updated: f.getLastUpdated().toISOString() };
+}
+
+function listFiles_() {
+  var out = [], it = filesFolder_().getFiles();
+  while (it.hasNext()) { var f = it.next(); out.push({ name: f.getName(), size: f.getSize(), updated: f.getLastUpdated().toISOString() }); }
+  out.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+  return { ok: true, files: out };
+}
+
+/** mode: 'replace' (default) or 'append' (adds the text on a new line at the end). */
+function writeFile_(name, content, mode) {
+  var n = safeFileName_(name);
+  if (!n) return { ok: false, error: 'bad_name' };
+  content = String(content == null ? '' : content);
+  if (content.length > 2000000) return { ok: false, error: 'too_big' };
+  var f = findFile_(n);
+  if (mode === 'append' && f) {
+    var old = f.getBlob().getDataAsString('UTF-8');
+    content = old + (old && !/\n$/.test(old) ? '\n' : '') + content;
+  }
+  if (f) {
+    // keep a dated backup copy before every replace, so nothing is ever lost
+    if (mode !== 'append') backupFile_(f);
+    f.setContent(content);
+  } else {
+    f = filesFolder_().createFile(n, content, n.slice(-3) === '.md' ? 'text/markdown' : 'text/plain');
+  }
+  return { ok: true, name: n, size: content.length };
+}
+
+function backupFile_(f) {
+  try {
+    var it = filesFolder_().getFoldersByName('Backups');
+    var b = it.hasNext() ? it.next() : filesFolder_().createFolder('Backups');
+    var stamp = Utilities.formatDate(new Date(), 'Europe/London', 'yyyy-MM-dd');
+    var name = stamp + ' ' + f.getName();
+    if (!b.getFilesByName(name).hasNext()) f.makeCopy(name, b); // one backup per file per day
+  } catch (e) { log_('warn', 'backup failed: ' + e); }
 }
 
 /* ───────────────────────── People and keys ───────────────────────── */
