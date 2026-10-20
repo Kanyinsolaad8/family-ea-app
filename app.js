@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.2.0';
+  var VERSION = '1.4.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -51,18 +51,119 @@
   }
   // "its 1pm run" today, or "tomorrow’s 9am run" after the last run.
   function runWhen() { var r = nextRun(); return /^tomorrow /.test(r) ? 'tomorrow\u2019s ' + r.slice(9) + ' run' : 'its ' + r + ' run'; }
-  // Reminder presets: one tap, no typing. [key, label, Date]
+  // Reminder presets: one tap, no typing. [key, label, Date, group]. A window that has passed drops out.
   function whenOptions() {
     var n = new Date(), out = [];
-    function at(days, h) { var x = new Date(n); x.setDate(x.getDate() + days); x.setHours(h, 0, 0, 0); return x; }
-    out.push(['1h', 'In 1 hour', new Date(n.getTime() + 3600000)]);
-    if (n.getHours() < 18) out.push(['eve', 'This evening', at(0, 19)]);
-    out.push(['tom', 'Tomorrow morning', at(1, 8)]);
+    function at(days, h, m) { var x = new Date(n); x.setDate(x.getDate() + days); x.setHours(h, m || 0, 0, 0); return x; }
+    function inWindow(h0, h1) { // the window's start, or the next half hour inside it
+      if (n.getHours() < h0) return at(0, h0);
+      var t = new Date(n.getTime() + 30 * 60000); t.setSeconds(0, 0); t.setMinutes(t.getMinutes() <= 30 ? 30 : 60);
+      return t.getHours() < h1 && t.getDate() === n.getDate() ? t : null;
+    }
+    out.push(['1h', 'In 1 hour', new Date(n.getTime() + 3600000), 'Today']);
+    [['morn', 'This morning', 9, 12], ['aft', 'This afternoon', 14, 17], ['eve', 'This evening', 19, 21], ['night', 'Tonight', 21, 22]].forEach(function (w) {
+      var t = inWindow(w[2], w[3]); if (t) out.push([w[0], w[1], t, 'Today']);
+    });
+    out.push(['tom', 'Tomorrow morning', at(1, 8), 'Tomorrow'], ['tomaft', 'Tomorrow afternoon', at(1, 14), 'Tomorrow'], ['tomeve', 'Tomorrow evening', at(1, 19), 'Tomorrow']);
     var dow = n.getDay(), toSat = (6 - dow + 7) % 7;
     if (toSat === 0 && n.getHours() >= 9) toSat = 7;
-    out.push(['sat', 'Saturday', at(toSat, 10)]);
-    out.push(['mon', 'Monday', at((8 - dow) % 7 || 7, 8)]);
+    out.push(['sat', 'Saturday', at(toSat, 10), 'Later']);
+    out.push(['mon', 'Monday', at((8 - dow) % 7 || 7, 8), 'Later']);
     return out;
+  }
+  function defaultWhen() { var h = new Date().getHours(); return h < 18 ? 'eve' : 'tom'; }
+  // Reads a time out of what was typed: "tomorrow morning", "tonight", "at 3pm", "Friday", "15:30".
+  var WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  function guessWhen(raw) {
+    var t = ' ' + String(raw || '').toLowerCase().replace(/[’']/g, '') + ' ', n = new Date();
+    var tom = /\b(tomorrow|tmrw|tmr)\b/.test(t), dow = -1;
+    WEEKDAYS.forEach(function (w, k) { if (new RegExp('\\b' + w + '\\b').test(t)) dow = k; });
+    var m = t.match(/\b(?:at|by)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?(?![\d:.])/) || t.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/) || t.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
+    var h = -1, mi = 0;
+    if (m) {
+      h = +m[1]; mi = +(m[2] || 0);
+      if (m[3] === 'pm' && h < 12) h += 12;
+      if (m[3] === 'am' && h === 12) h = 0;
+      if (!m[3] && !m[2] && h >= 1 && h <= 7) h += 12; // "at 3" means the afternoon
+      if (/\bmorning\b/.test(t) && h >= 12 && h < 13) h = 12;
+      if (h > 23 || mi > 59) h = -1;
+    }
+    function on(days) { var x = new Date(n); x.setDate(x.getDate() + days); return x; }
+    var base = null;
+    if (tom) base = on(1);
+    else if (dow > -1) { var dd = (dow - n.getDay() + 7) % 7; base = on(dd === 0 && h < 0 ? 7 : dd); }
+    if (h > -1) {
+      var x = new Date(base || n); x.setHours(h, mi, 0, 0);
+      if (!base && x.getTime() < n.getTime()) x.setDate(x.getDate() + 1);
+      if (base && dow > -1 && x.getTime() < n.getTime()) x.setDate(x.getDate() + 7);
+      return { key: 'pick', at: x };
+    }
+    var key = '';
+    if (/\btonight\b/.test(t)) key = 'night';
+    else if (/\bevening\b/.test(t)) key = tom ? 'tomeve' : 'eve';
+    else if (/\bafternoon\b/.test(t)) key = tom ? 'tomaft' : 'aft';
+    else if (/\bmorning\b/.test(t)) key = tom ? 'tom' : 'morn';
+    else if (tom) key = 'tom';
+    else if (dow === 6) key = 'sat';
+    else if (dow === 1 || /\bnext week\b/.test(t)) key = 'mon';
+    else if (dow > -1) { var y = new Date(base); y.setHours(9, 0, 0, 0); return { key: 'pick', at: y }; }
+    else if (/\bin (an|1|one) hour\b/.test(t)) key = '1h';
+    if (key && whenOptions().some(function (o) { return o[0] === key; })) return { key: key };
+    return null;
+  }
+  // How much a jot should nudge. Gentle: no alert. Important: a heads-up 30 minutes before.
+  function guessLevel(raw) {
+    var t = String(raw || '').toLowerCase().replace(/[’']/g, '');
+    if (/\b(maybe|someday|sometime|some point|idea|ideas|perhaps|if (i have )?time|no rush|wish ?list)\b/.test(t)) return 'gentle';
+    if (/\b(urgent|asap|deadline|due|must|dont forget|pay|bill|renew|expir\w*|appointment|doctor|dentist|gp|hospital|interview|flight|train|visa|passport|school|nursery|pick ?up|collect|meeting|tax|rent|mot|fine|court|exam|contract|sign|submit|apply|book|booking|insurance)\b/.test(t)) return 'important';
+    if (/\b(read|watch|browse|look into|think about|recipe|podcast|consider|nice to)\b/.test(t)) return 'gentle';
+    return 'normal';
+  }
+  // Where an untimed jot fits best in the day, and why.
+  var SLOT_HINTS = [
+    ['morning', /\b(call|ring|phone|email|reply|book|pay|bill|renew|apply|submit|form|bank|council|gp|doctor|dentist|admin|invoice|tax|insurance|sign|landlord)\b/, 'Calls and admin go best in the morning'],
+    ['afternoon', /\b(shop|shopping|buy|order|collect|pick ?up|drop ?off|return|post office|errand|gym|walk|run|swim|cycle|garage|car|clean|wash|hoover)\b/, 'Good for errands and getting out'],
+    ['evening', /\b(read|watch|plan|think|journal|pray|cook|prep|tidy|pack|iron|mum|dad|family|chat|text|message|ask|budget|review|learn|study|french|practise|practice|gift|present)\b/, 'A calm job for the evening']
+  ];
+  function suggestSlot(raw) {
+    var t = String(raw || '').toLowerCase();
+    for (var k = 0; k < SLOT_HINTS.length; k++) if (SLOT_HINTS[k][1].test(t)) return { slot: SLOT_HINTS[k][0], why: SLOT_HINTS[k][2] };
+    return { slot: 'anytime', why: '' };
+  }
+  // A short, practical "get ready" line for the next thing.
+  var PREP = [
+    [/\b(insurance|renew|contract|broadband|energy|phone deal)\b/, 'Check what you pay now, then compare two quotes before you call.'],
+    [/\b(dentist|doctor|gp|hospital|appointment|clinic|surgery)\b/, 'Leave 15 minutes early. Bring any letters and your questions.'],
+    [/\binterview\b/, 'Re-read the job advert and have two questions ready.'],
+    [/\b(viewing|house|flat|landlord|agent)\b/, 'Write your three must-ask questions and check the drive time.'],
+    [/\b(flight|train|coach|travel|trip|airport)\b/, 'Check times and tickets, and charge your phone.'],
+    [/\b(call|ring|phone)\b/, 'Have the account or reference number and a pen ready.'],
+    [/\b(email|reply|write|message|text|ask)\b/, 'Two minutes: draft it, read it once, send.'],
+    [/\b(pay|bill|invoice|tax|rent|fine)\b/, 'Check the amount and due date before you pay.'],
+    [/\b(book|booking|reserve)\b/, 'Have two dates that work before you start.'],
+    [/\b(shop|shopping|buy|groceries|order)\b/, 'Check the shared list first so it’s one trip.'],
+    [/\b(collect|pick ?up|return|drop ?off|post office)\b/, 'Check the opening times, and take any ticket or ID.'],
+    [/\b(gym|run|swim|swimming|walk|cycle|cycling|yoga|workout)\b/, 'Lay out your kit and fill a water bottle first.'],
+    [/\b(birthday|gift|present|anniversary)\b/, 'Set a budget first, then choose in under 10 minutes.'],
+    [/\b(cook|dinner|meal|recipe)\b/, 'Check the ingredients. Add any gaps to the shopping list.'],
+    [/\b(pack|move|moving|van)\b/, 'Start with one box and one room.'],
+    [/\b(read|study|learn|french|course|revise)\b/, 'Phone face down, 20 minutes, then stop.'],
+    [/\b(bins?|recycling|rubbish)\b/, 'Bag it up after dinner so it\u2019s one trip to the kerb.'],
+    [/\bclash\b/, 'Pick the option that protects the bigger commitment.']
+  ];
+  function prepTip(raw) {
+    var t = String(raw || '').toLowerCase().trim();
+    if (/^(call|ring|phone)\b/.test(t)) return PREP[5][1]; // the first word is the job: "Call the GP" is a call
+    if (/^(email|reply|message|text|ask)\b/.test(t)) return PREP[6][1];
+    for (var k = 0; k < PREP.length; k++) if (PREP[k][0].test(t)) return PREP[k][1];
+    return '';
+  }
+  function inLabel(ms) {
+    var mins = Math.round((ms - Date.now()) / 60000);
+    if (mins <= 0) return 'now';
+    if (mins < 60) return 'in ' + mins + ' min';
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return 'in ' + h + 'h' + (m ? ' ' + m + 'm' : '');
   }
   function whenLabel(iso) {
     var x = d(iso); if (!x) return '';
@@ -101,19 +202,23 @@
     drop: '<path d="M12 3c3.5 4.3 6 7.6 6 10.6A6 6 0 0 1 6 13.6C6 10.6 8.5 7.3 12 3z"/>',
     spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
     shuffle: '<path d="M4 7h3c5 0 5 10 10 10h3"/><path d="M4 17h3c2 0 3-1.5 4-3.5M13 9.5C14 8 15 7 17 7h3"/><path d="M18 4l3 3-3 3M18 14l3 3-3 3"/>',
-    minus: '<path d="M5 12h14"/>'
+    minus: '<path d="M5 12h14"/>',
+    heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5z"/>'
   };
 
   /* ───────── state ───────── */
   var S = {
     mode: 'loading', demo: false, key: LS.get('fea.key', null), person: null, name: '',
-    data: { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], doneToday: 0, alerts: {} },
+    data: { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], gratitude: [], doneToday: 0, alerts: {} },
     tab: LS.get('fea.tab', 'today'), who: 'all', houseFilter: 'new', openScore: {}, seg: 'mine',
     month: 'all', mod: 'all', hq: '', histOpen: null, draft: '', files: [], ref: null, reading: 0,
     sheet: null, sheetItem: null, sheetFresh: false, unlinkAsk: false,
-    jotText: '', jotWhen: '', pickTime: '', listSeg: 'groceries', gText: '', showSnoozed: false, lastDone: 0,
+    jotText: '', jotWhen: '', pickTime: '', jotLevel: 'normal', jotLevelSet: false, jotWhenSet: false, jotGuessed: false, editId: null, grText: '', grShare: false, grMore: false, listSeg: 'groceries', gText: '', showSnoozed: false, lastDone: 0,
     gHistory: LS.get('fea.gHistory', []),
-    prefs: Object.assign({ theme: 'auto', size: 'm', font: 'cambria', hc: false, rm: false, waterGoal: 8, game: '', quotes: true }, LS.get('fea.prefs', {})),
+    prefs: (function () { var p = Object.assign({ theme: 'auto', size: 'm', font: 'calm', hc: false, rm: false, waterGoal: 8, game: '', quotes: true }, LS.get('fea.prefs', {})); if (!p.v2) { if (p.font === 'cambria') p.font = 'calm'; p.v2 = true; } return p; })(),
     pending: {}, syncing: false, offline: false, linkError: '', installHidden: LS.get('fea.installHidden', false),
     chatSeen: LS.get('fea.chatSeen', ''), firstPaint: true,
     instant: LS.get('fea.instant', []), reports: {}, water: LS.get('fea.water', {}), challenge: null,
@@ -162,15 +267,18 @@
     }
   };
 
-  function accept(res) {
+  function accept(res, startedAt) {
+    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude } : null;
     S.data = {
       items: (res.items || []).filter(function (i) { return canSee(i.for); }).map(function (i) { i.data = i.data || {}; return i; }),
       history: (res.history || []).filter(function (h) { return canSee(h.for); }),
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
-      notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [],
+      notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true }
     };
+    if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
     (S.localNotes || []).forEach(function (n) { if (!S.data.notes.some(function (x) { return x.id === n.id; })) S.data.notes.push(n); });
+    (S.localGratitude || []).forEach(function (g) { if (!S.data.gratitude.some(function (x) { return x.id === g.id; })) S.data.gratitude.push(g); });
     (S.localGroceries || []).forEach(function (g) { if (!S.data.groceries.some(function (x) { return x.id === g.id || (x.name.toLowerCase() === g.name.toLowerCase() && !x.ticked); })) S.data.groceries.push(g); });
     // keep optimistic chat messages that the server hasn't echoed yet
     (S.localMsgs || []).forEach(function (m) { if (!S.data.messages.some(function (x) { return x.id === m.id; })) S.data.messages.push(m); });
@@ -180,13 +288,14 @@
     opts = opts || {};
     if (S.syncing) return Promise.resolve();
     S.syncing = true; paintSync();
+    var startedAt = Date.now();
     return api.load().then(function (res) {
       if (!res || !res.ok) {
         if (res && res.error === 'bad_key') { unlink('That key isn’t recognised. Check it and try again.'); return; }
         throw new Error((res && res.error) || 'load_failed');
       }
       S.person = res.person; S.name = res.name || PEOPLE[res.person] || 'You';
-      accept(res);
+      accept(res, startedAt);
       if (!S.demo) { LS.set('fea.cache', { res: res, at: new Date().toISOString() }); IDB.set('cfg', { key: S.key, api: CFG.API_URL, person: res.person }); }
       S.offline = false;
       var wasLink = S.mode !== 'app';
@@ -324,8 +433,7 @@
     if (route === 'other' && builtIn(text) && answerInstantly(text)) { S.draft = ''; render(); return; }
     if (route === 'jot') {
       S.draft = '';
-      S.jotText = text.replace(/^remind me\s*(to\s+|about\s+)?/i, '').replace(/^./, function (c) { return c.toUpperCase(); });
-      S.pickTime = ''; S.jotWhen = new Date().getHours() < 18 ? 'eve' : 'tom';
+      startJot(text.replace(/^remind me\s*(to\s+|about\s+)?/i, '').replace(/^./, function (c) { return c.toUpperCase(); }));
       render(); openSheet('jot');
       toast('Pick a time and save. Your phone reminds you, no EA run needed.', { ms: 5000 });
       return;
@@ -361,43 +469,116 @@
     if (navigator.clipboard && t) navigator.clipboard.writeText(t).then(function () { toast(ok); }, function () { toast(t, { ms: 8000 }); });
     else toast(t || 'Nothing to copy.', { ms: 8000 });
   }
+  function noteById(id) { return (S.data.notes || []).filter(function (x) { return x.id === id || x.lid === id; })[0]; }
+  function startJot(text) {
+    S.editId = null; S.jotText = text || ''; S.pickTime = ''; S.jotLevel = 'normal'; S.jotLevelSet = false; S.jotWhenSet = false; S.jotGuessed = false;
+    S.jotWhen = defaultWhen();
+    if (text) jotGuess(text, true);
+  }
+  function startEdit(id) {
+    var n = noteById(id); if (!n) return false;
+    S.editId = id; S.jotText = n.text; S.jotLevel = n.level || 'normal'; S.jotLevelSet = true; S.jotWhenSet = true; S.jotGuessed = false;
+    S.jotWhen = n.remindAt ? 'keep' : 'none'; S.pickTime = n.remindAt ? localInputValue(new Date(n.remindAt)) : '';
+    return true;
+  }
+  // As you type a new jot, guess how important it is and when it's for, unless you've already chosen.
+  function jotGuess(text, quiet) {
+    if (S.editId) return;
+    if (!S.jotLevelSet) S.jotLevel = guessLevel(text);
+    if (!S.jotWhenSet) {
+      var g = guessWhen(text);
+      if (g) { S.jotWhen = g.key; if (g.at) S.pickTime = localInputValue(g.at); S.jotGuessed = true; }
+      else { S.jotWhen = S.jotLevel === 'gentle' ? 'none' : defaultWhen(); S.jotGuessed = false; }
+    }
+    if (quiet) return;
+    var lv = document.getElementById('jot-level'); if (lv) lv.innerHTML = levelChips();
+    var wh = document.getElementById('jot-whenwrap'); if (wh) wh.innerHTML = whenPicker(true);
+  }
   function saveJot() {
+    S.gChangedAt = Date.now();
     var text = ((document.getElementById('jot-text') || {}).value || S.jotText || '').trim();
     if (!text) { toast('Type or say what you need to remember.'); return; }
-    var at = chosenWhen();
+    var at = chosenWhen(), level = S.jotLevel || 'normal';
     if (S.jotWhen === 'pick' && !at) { toast('Pick a date and time first.'); return; }
-    var tmp = { id: 'local-n' + Date.now(), text: text, created: new Date().toISOString(), remindAt: at, status: 'open' };
+    if (S.editId) {
+      var n = noteById(S.editId);
+      if (!n) { closeSheet(); return; }
+      var before = JSON.stringify(n), body = { type: 'note', op: 'edit', id: n.id, text: text, level: level };
+      if (S.jotWhen !== 'keep') { body.remindAt = at; n.remindAt = at; }
+      n.text = text; n.level = level; S.jotText = '';
+      closeSheet(); render();
+      toast('Updated.' + (n.remindAt ? ' ' + whenLabel(n.remindAt) + (level === 'gentle' ? ', no alert.' : '.') : ''));
+      if (String(n.id).indexOf('local-') === 0) return;
+      api.post(body).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
+        Object.assign(n, JSON.parse(before)); toast('Couldn’t save the change. Try again.'); render();
+      });
+      return;
+    }
+    var lid = 'local-n' + Date.now(), tmp = { id: lid, lid: lid, text: text, created: new Date().toISOString(), remindAt: at, status: 'open', level: level };
     S.localNotes = (S.localNotes || []).concat([tmp]);
     S.data.notes.push(tmp); S.jotText = '';
     closeSheet(); render();
-    toast(at ? 'Saved. I\u2019ll remind you ' + whenLabel(at) + '.' : 'Saved to My list.');
-    api.post({ type: 'note', op: 'add', text: text, remindAt: at }).then(function (r) {
+    toast(!at ? 'Saved to My list.' : level === 'gentle' ? 'Saved. It shows on Today ' + whenLabel(at) + ', no alert.' : level === 'important' ? 'Saved. Heads-up 30 min before, then I’ll remind you ' + whenLabel(at) + '.' : 'Saved. I’ll remind you ' + whenLabel(at) + '.');
+    api.post({ type: 'note', op: 'add', text: text, remindAt: at, level: level }).then(function (r) {
       if (!r || !r.ok) throw new Error();
       tmp.id = r.id; S.localNotes = S.localNotes.filter(function (n) { return n !== tmp; });
     }).catch(function () {
       S.data.notes = S.data.notes.filter(function (n) { return n !== tmp; }); S.localNotes = (S.localNotes || []).filter(function (n) { return n !== tmp; });
-      S.jotText = text; toast('Couldn\u2019t save. Your note is kept, try again.'); render();
+      S.jotText = text; toast('Couldn’t save. Your note is kept, try again.'); render();
     });
   }
+  /* gratitude: one line a day, private unless shared */
+  function addGratitude() {
+    var el = document.getElementById('gr-input'), text = ((el && el.value) || S.grText || '').replace(/\s+/g, ' ').trim();
+    if (!text) { toast('One line is enough. What went well today?'); return; }
+    S.gChangedAt = Date.now();
+    var glid = 'local-gr' + Date.now(), tmp = { id: glid, lid: glid, day: todayKey(), text: text, shared: !!S.grShare, from: '', created: new Date().toISOString() };
+    S.data.gratitude.push(tmp); S.localGratitude = (S.localGratitude || []).concat([tmp]);
+    S.grText = ''; S.grMore = false; render();
+    toast(tmp.shared ? 'Saved and shared with ' + otherName() + '.' : 'Saved. Only you can see it.');
+    api.post({ type: 'gratitude', op: 'add', text: text, shared: tmp.shared }).then(function (r) {
+      if (!r || !r.ok) throw new Error(); tmp.id = r.id; S.localGratitude = S.localGratitude.filter(function (g) { return g !== tmp; });
+    }).catch(function () {
+      S.data.gratitude = S.data.gratitude.filter(function (g) { return g !== tmp; }); S.localGratitude = (S.localGratitude || []).filter(function (g) { return g !== tmp; });
+      S.grText = text; toast('Couldn’t save. Try again.'); render();
+    });
+  }
+  function grOp(id, op) {
+    var g = (S.data.gratitude || []).filter(function (x) { return (x.id === id || x.lid === id) && !x.from; })[0]; if (!g) return;
+    S.gChangedAt = Date.now();
+    var before = JSON.stringify(g), body = { type: 'gratitude', op: op, id: g.id };
+    if (op === 'share') { g.shared = !g.shared; body.shared = g.shared; toast(g.shared ? 'Shared with ' + otherName() + '.' : 'Private again.'); }
+    if (op === 'delete') S.data.gratitude = S.data.gratitude.filter(function (x) { return x !== g; });
+    render();
+    if (String(g.id).indexOf('local-') === 0) return;
+    api.post(body).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
+      if (op === 'delete') S.data.gratitude.push(g); else Object.assign(g, JSON.parse(before));
+      toast('Couldn’t save that. Try again.'); render();
+    });
+  }
+  function otherName() { var k = Object.keys(PEOPLE).filter(function (p) { return p !== S.person; })[0]; return k ? PEOPLE[k] : 'the family'; }
   function noteOp(id, op) {
-    var n = S.data.notes.filter(function (x) { return x.id === id; })[0]; if (!n) return;
+    S.gChangedAt = Date.now();
+    var n = noteById(id); if (!n) return;
     var before = JSON.stringify(n);
     if (op === 'done') { n.status = 'done'; n.doneAt = new Date().toISOString(); S.data.doneToday = (S.data.doneToday || 0) + 1; toast('Nice one. Done.'); }
     if (op === 'undo') { n.status = 'open'; S.data.doneToday = Math.max(0, (S.data.doneToday || 0) - 1); }
     if (op === 'delete') S.data.notes = S.data.notes.filter(function (x) { return x !== n; });
     render();
-    api.post({ type: 'note', op: op, id: id }).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
+    if (String(n.id).indexOf('local-') === 0) return;
+    api.post({ type: 'note', op: op, id: n.id }).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
       Object.assign(n, JSON.parse(before)); if (op === 'delete') S.data.notes.push(n); toast('Couldn\u2019t save that. Try again.'); render();
     });
   }
   function doSnooze() {
+    S.gChangedAt = Date.now();
     var it = S.sheetItem, at = chosenWhen();
     if (!it || !at) { toast('Pick when to be reminded.'); return; }
     closeSheet();
     if (it.kind === 'note') {
-      var n = S.data.notes.filter(function (x) { return x.id === it.id; })[0];
+      var n = noteById(it.id);
       if (n) n.remindAt = at;
-      api.post({ type: 'note', op: 'snooze', id: it.id, remindAt: at }).catch(function () { toast('Couldn\u2019t save that. Try again.'); });
+      if (n && String(n.id).indexOf('local-') !== 0) api.post({ type: 'note', op: 'snooze', id: n.id, remindAt: at }).catch(function () { toast('Couldn\u2019t save that. Try again.'); });
     } else {
       S.data.snoozes = (S.data.snoozes || []).filter(function (z) { return z.itemId !== it.id; }).concat([{ itemId: it.id, until: at }]);
       api.post({ type: 'snooze', itemId: it.id, until: at }).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
@@ -408,11 +589,13 @@
     render();
   }
   function unsnooze(id) {
+    S.gChangedAt = Date.now();
     S.data.snoozes = (S.data.snoozes || []).filter(function (z) { return z.itemId !== id; });
     render();
     api.post({ type: 'snooze', op: 'clear', itemId: id }).catch(function () {});
   }
   function addGrocery(raw) {
+    S.gChangedAt = Date.now();
     var t = String(raw || '').replace(/\s+/g, ' ').trim();
     if (!t) return;
     var m = t.match(/^(\d+(?:\.\d+)?\s*(?:x|kg|g|l|ml|pack|packs|bags?|tins?)?)\s+(.+)$/i) || t.match(/^(.+?)\s+[x\u00d7](\d+)$/i);
@@ -435,6 +618,7 @@
     var gi = document.getElementById('g-input'); if (gi) gi.focus({ preventScroll: true });
   }
   function groceryOp(id, op) {
+    S.gChangedAt = Date.now();
     var snapshot = JSON.stringify(S.data.groceries);
     if (op === 'clear') S.data.groceries = S.data.groceries.filter(function (g) { return !g.ticked; });
     else {
@@ -576,27 +760,13 @@
         '<div class="note">In Safari, tap Share, then “Add to Home Screen”. Open it from there and paste your key once more.</div>' +
         '<button class="btn small olive" data-act="copykey">Copy my key</button></section>');
     }
+    // "Your day": what's next, then the rest of today by morning, afternoon and evening.
+    var day = yourDay(all);
+    html.push(day.html);
+    var gc = gratitudeCard(); if (gc) html.push(gc);
     var qc = quoteCard(); if (qc) html.push(qc);
-    // "Your 3 for today": the short answer to "what now?"
-    var top = dueNotes().map(function (n) { return { note: n }; }).concat(all.map(function (x) { return { need: x }; })).slice(0, 3);
-    var shownNeeds = top.filter(function (t) { return t.need; }).map(function (t) { return t.need; });
-    var doneN = S.data.doneToday || 0;
-    var bump = doneN > S.lastDone && S.lastDone > 0; S.lastDone = doneN;
-    html.push('<section class="top3" aria-label="Your 3 for today"><div class="row-between"><h2 class="h2" style="color:var(--olive)">Your 3 for today</h2>' +
-      '<span class="donechip' + (bump ? ' bump' : '') + '" aria-live="polite">' + svg(I.check, 14) + 'Done today · ' + doneN + '</span></div>' +
-      (top.length ? '<ol class="three">' + top.map(function (t, k) {
-        if (t.note) {
-          var n = t.note, over = Date.parse(n.remindAt) < Date.now();
-          return '<li><button class="gcheck" data-act="notedone" data-id="' + esc(n.id) + '" aria-label="Done: ' + esc(n.text) + '"><span class="box"></span></button>' +
-            '<span class="col"><span class="t">' + esc(n.text) + '</span><span class="s' + (over ? ' late' : '') + '">' + svg(I.bell, 12) + ' ' + (over ? 'Was due ' : '') + esc(whenLabel(n.remindAt)) + '</span></span>' +
-            '<button class="btn small" data-act="snoozenote" data-id="' + esc(n.id) + '">Later</button></li>';
-        }
-        var x = t.need;
-        return '<li><span class="num" aria-hidden="true">' + (k + 1) + '</span><button class="col linkcol" data-act="go" data-v="' + x.go + '"><span class="t">' + esc(x.title) + '</span><span class="s">' + esc(x.sub) + '</span></button>' +
-          (x.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(x.id) + '">Later</button>' : '<span class="chev">' + svg(I.chev, 18) + '</span>') + '</li>';
-      }).join('') + '</ol>' : '<div class="allclear" style="background:transparent;padding:4px 0">' + svg(I.check, 20) + 'Nothing urgent. Got a thought? Tap + to jot it down.</div>') + '</section>');
     html.push(waterCard());
-    var rest = S.who === 'all' ? list.filter(function (x) { return shownNeeds.indexOf(x) < 0; }) : list;
+    var rest = list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; });
     html.push('<section class="tiles" aria-label="Who needs to act">' + tiles + '</section>');
     list = rest;
     html.push('<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + list.length + '</h2>' +
@@ -626,6 +796,118 @@
         return '<button class="feed" data-act="report" data-id="' + esc(h.id) + '"><span class="when">' + esc(relWhen(h.date)) + '</span><span class="col" style="display:flex;flex-direction:column;gap:2px"><b style="font-size:.875rem">' + esc(h.title) + '</b><span class="note" style="font-size:.8125rem">' + esc(h.outcome) + '</span></span></button>';
       }).join('') + '</div>' : '<div class="empty">Your EA’s updates will appear here after its next run.</div>') + '</section>');
     return html;
+  }
+
+  function slotOf(ms) { var h = new Date(ms).getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; }
+  var SLOTS = [['morning', 'Morning', 'sun'], ['afternoon', 'Afternoon', 'sun'], ['evening', 'Evening', 'moon'], ['anytime', 'Anytime', 'leaf']];
+  function slotRank(k) { for (var i = 0; i < SLOTS.length; i++) if (SLOTS[i][0] === k) return i; return 3; }
+  // Everything for today, placed in the part of the day it belongs to. Untimed jots get a suggested slot.
+  function dayEntries() {
+    var now = Date.now(), end = endOfToday().getTime(), start = dayStart(new Date()).getTime(), cur = slotOf(now), out = [];
+    openNotes().forEach(function (n) {
+      var t = n.remindAt ? Date.parse(n.remindAt) : NaN;
+      if (isNaN(t) || t > end) return;
+      out.push({ kind: 'note', id: n.id, text: n.text, at: t, slot: t < start ? cur : slotOf(t), late: t < now - 5 * 60000, level: n.level || 'normal', earlier: t < start });
+    });
+    items('plan').filter(function (i) { return i.status === 'open' && !S.pending[i.id] && !isSnoozed(i.id) && i.due; }).forEach(function (i) {
+      var t = Date.parse(i.due); if (isNaN(t) || t < start || t > end) return;
+      out.push({ kind: 'item', id: i.id, text: (i.data.kind === 'clash' ? 'Clash: ' : '') + i.title, sub: i.summary || '', at: t, slot: slotOf(t), late: t < now - 5 * 60000, level: i.data.kind === 'clash' ? 'important' : 'normal', go: 'plan' });
+    });
+    var loose = openNotes().filter(function (n) { return !n.remindAt; }), shownLoose = 0;
+    loose.forEach(function (n) {
+      if (shownLoose >= 4) return;
+      var g = suggestSlot(n.text), slot = g.slot;
+      if (slot !== 'anytime' && slotRank(slot) < slotRank(cur)) { slot = 'anytime'; g.why = ''; }
+      shownLoose++;
+      out.push({ kind: 'note', id: n.id, text: n.text, at: null, slot: slot, suggested: g.why, level: n.level || 'normal' });
+    });
+    return { list: out.sort(function (a, b) { return slotRank(a.slot) - slotRank(b.slot) || (a.at === null) - (b.at === null) || (a.at || 0) - (b.at || 0); }), more: loose.length - shownLoose };
+  }
+  function tomorrowFirst() {
+    var a = dayStart(new Date()).getTime() + 86400000, b = a + 86400000, best = null;
+    openNotes().forEach(function (n) { var t = Date.parse(n.remindAt); if (t >= a && t < b && (!best || t < best.at)) best = { at: t, text: n.text }; });
+    items('plan').forEach(function (i) { var t = Date.parse(i.due); if (i.status === 'open' && t >= a && t < b && (!best || t < best.at)) best = { at: t, text: i.title }; });
+    return best;
+  }
+  function dayRowBtns(e) {
+    if (e.kind === 'note') return '<button class="btn small" data-act="snoozenote" data-id="' + esc(e.id) + '">Later</button>';
+    return e.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(e.id) + '">Later</button>' : '';
+  }
+  function levelMark(l) { return l === 'important' ? '<span class="lvmark imp" title="Important" aria-label="Important"></span>' : l === 'gentle' ? '<span class="lvmark gen" title="Gentle, no alert" aria-label="Gentle, no alert"></span>' : ''; }
+  function yourDay(needsList) {
+    var now = Date.now(), d0 = dayEntries(), entries = d0.list, cur = slotOf(now);
+    var timed = entries.filter(function (e) { return e.at !== null; });
+    var next = timed.filter(function (e) { return !e.late; })[0] || timed.filter(function (e) { return e.late; }).slice(-1)[0] || null;
+    var need = null;
+    if (!next) need = needsList[0] || null;
+    if (!next && !need) next = entries[0] || null;
+    var doneN = S.data.doneToday || 0, bump = doneN > S.lastDone && S.lastDone > 0; S.lastDone = doneN;
+    var shown = entries.filter(function (e) { return e.kind === 'item'; }).map(function (e) { return e.id; });
+    var h = '<section class="yourday" aria-label="Your day"><div class="row-between"><h2 class="h2" style="color:var(--olive)">Your day</h2>' +
+      '<span class="donechip' + (bump ? ' bump' : '') + '" aria-live="polite">' + svg(I.check, 14) + 'Done today · ' + doneN + '</span></div>';
+    if (next || need) {
+      var title, when, tip, btns;
+      if (next) {
+        title = next.text;
+        when = next.at === null ? (next.suggested ? 'Suggested for the ' + next.slot : 'When you have a moment') : next.late ? (next.earlier ? 'Was due ' + whenLabel(new Date(next.at).toISOString()) : 'Was due ' + hhmm(new Date(next.at).toISOString())) : hhmm(new Date(next.at).toISOString()) + ' · ' + inLabel(next.at);
+        tip = prepTip(next.text + ' ' + (next.sub || '')) || next.sub || 'Start with the first two-minute step.';
+        btns = next.kind === 'note'
+          ? '<button class="btn small primary" data-act="notedone" data-id="' + esc(next.id) + '">' + svg(I.check, 16) + 'Done</button><button class="btn small" data-act="editnote" data-id="' + esc(next.id) + '">' + svg(I.edit, 15) + 'Edit</button>' + dayRowBtns(next)
+          : '<button class="btn small primary" data-act="go" data-v="' + esc(next.go) + '">Open</button>' + dayRowBtns(next);
+      } else {
+        title = need.title; when = 'Needs you'; tip = need.sub || ''; shown.push(need.id || need.title);
+        btns = '<button class="btn small primary" data-act="go" data-v="' + esc(need.go) + '">Open</button>' + (need.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(need.id) + '">Later</button>' : '');
+      }
+      h += '<div class="nextup' + (next && next.late ? ' late' : '') + '"><span class="nx-l">Next up · ' + esc(when) + levelMark(next ? next.level : '') + '</span>' +
+        '<b class="nx-t">' + esc(title) + '</b>' + (tip ? '<span class="nx-tip">' + svg(I.spark, 14) + '<span>' + esc(tip) + '</span></span>' : '') +
+        '<div class="nx-btns">' + btns + '</div></div>';
+    }
+    var rest = entries.filter(function (e) { return e !== next && !e.late; }), missed = entries.filter(function (e) { return e !== next && e.late; });
+    function row(e, quiet) {
+      var sub = e.at === null ? (e.suggested ? 'Suggested · ' + e.suggested : 'No time set') : e.late ? 'Was due ' + (e.earlier ? whenLabel(new Date(e.at).toISOString()) : hhmm(new Date(e.at).toISOString())) : hhmm(new Date(e.at).toISOString()) + (e.sub ? ' · ' + e.sub : '');
+      var main = e.kind === 'note'
+        ? '<button class="gcheck" data-act="notedone" data-id="' + esc(e.id) + '" aria-label="Done: ' + esc(e.text) + '"><span class="box"></span></button><button class="col linkcol" data-act="editnote" data-id="' + esc(e.id) + '" aria-label="Edit: ' + esc(e.text) + '">'
+        : '<span class="pdot" aria-hidden="true"></span><button class="col linkcol" data-act="go" data-v="' + esc(e.go) + '">';
+      return '<li class="drow' + (quiet ? ' quiet' : '') + '">' + main + '<span class="t">' + esc(e.text) + levelMark(e.level) + '</span><span class="s">' + esc(sub) + '</span></button>' + dayRowBtns(e) + '</li>';
+    }
+    if (rest.length) {
+      h += '<div class="slots">' + SLOTS.map(function (sl) {
+        var rows = rest.filter(function (e) { return e.slot === sl[0]; });
+        if (!rows.length) return '';
+        var isNow = sl[0] === cur;
+        return '<div class="slot' + (isNow ? ' now' : '') + '"><div class="slot-h">' + svg(I[sl[2]], 14) + '<span>' + sl[1] + '</span>' + (isNow ? '<span class="nowtag">Now</span>' : '') + '</div><ul class="slotlist">' + rows.map(function (e) { return row(e); }).join('') + '</ul></div>';
+      }).join('') + '</div>';
+    }
+    // Missed things wait quietly in one line instead of filling the screen.
+    if (missed.length) {
+      h += '<div class="missed"><button class="missed-h" data-act="togglemissed" aria-expanded="' + !!S.showMissed + '"><span>' + svg(I.history, 14) + 'From earlier · ' + missed.length + '</span><span class="mt">' + (S.showMissed ? 'Hide' : 'Show') + '</span></button>' +
+        (S.showMissed ? '<ul class="slotlist">' + missed.map(function (e) { return row(e, true); }).join('') + '</ul>' : '') + '</div>';
+    }
+    if (d0.more > 0) h += '<button class="textbtn" data-act="tab" data-v="lists">+' + d0.more + ' more on My list</button>';
+    if (!next && !need) h += '<div class="allclear" style="background:transparent;padding:4px 0">' + svg(I.check, 20) + 'Nothing planned. Got a thought? Tap + to jot it down.</div>';
+    var tf = new Date().getHours() >= 17 && tomorrowFirst();
+    if (tf) h += '<div class="tomline">' + svg(I.moon, 14) + '<span>Tomorrow starts with <b>' + esc(tf.text) + '</b> at ' + esc(hhmm(new Date(tf.at).toISOString())) + '</span></div>';
+    return { html: h + '</section>', shown: shown };
+  }
+  function grRow(g) {
+    var mine = !g.from;
+    return '<li class="grrow"><span class="t">' + esc(g.text) + '</span>' +
+      (mine ? '<button class="sharet" data-act="grshare" data-id="' + esc(g.id) + '" aria-pressed="' + !!g.shared + '" aria-label="' + (g.shared ? 'Shared with ' + esc(otherName()) + '. Tap to make private' : 'Private. Tap to share with ' + esc(otherName())) + '">' + (g.shared ? svg(I.heart, 14) + 'Shared' : 'Private') + '</button>' +
+        '<button class="fx" data-act="grdelete" data-id="' + esc(g.id) + '" aria-label="Delete: ' + esc(g.text) + '">' + svg(I.x, 16) + '</button>'
+        : '<span class="frombadge">From ' + esc(PEOPLE[g.from] || g.from) + '</span>') + '</li>';
+  }
+  function gratitudeForm() {
+    return '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">What are you grateful for today?</label>' +
+      '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="One line is enough" value="' + esc(S.grText) + '">' +
+      '<button class="send" type="submit" aria-label="Save">' + svg(I.check, 22) + '</button></form>' +
+      '<button class="sharet wide" data-act="grsharenew" aria-pressed="' + !!S.grShare + '">' + svg(I.heart, 14) + (S.grShare ? 'Will share with ' + esc(otherName()) : 'Just for me · tap to share with ' + esc(otherName())) + '</button>';
+  }
+  function gratitudeCard() {
+    var mine = (S.data.gratitude || []).filter(function (g) { return !g.from && g.day === todayKey(); });
+    if (new Date().getHours() < 17 && !mine.length) return '';
+    return '<section class="card pad stack grat" aria-label="Gratitude"><span class="h2 grh">' + svg(I.heart, 13) + ' Gratitude</span>' +
+      '<b class="gq">What are you grateful for today?</b>' +
+      (mine.length ? '<ul class="grlist">' + mine.map(grRow).join('') + '</ul>' + (S.grMore ? gratitudeForm() : '<button class="textbtn" data-act="grmore">Add another</button>') : gratitudeForm()) + '</section>';
   }
 
   function scoreRing(score) {
@@ -743,7 +1025,7 @@
     var g = S.data.groceries || [], notes = S.data.notes || [];
     var toBuy = g.filter(function (x) { return !x.ticked; }), basket = g.filter(function (x) { return x.ticked; });
     var other = Object.keys(PEOPLE).filter(function (k) { return k !== S.person; }).map(function (k) { return PEOPLE[k]; })[0] || 'the family';
-    var html = ['<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Groceries · ' + toBuy.length], ['mine', 'My list · ' + openNotes().length]].map(function (x) {
+    var html = ['<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Groceries · ' + toBuy.length], ['mine', 'My list · ' + openNotes().length], ['grateful', 'Grateful']].map(function (x) {
       return '<button role="tab" aria-selected="' + (S.listSeg === x[0]) + '" data-act="listseg" data-v="' + x[0] + '">' + esc(x[1]) + '</button>';
     }).join('') + '</div>'];
     if (S.listSeg === 'groceries') {
@@ -762,10 +1044,20 @@
         html.push('<section class="stack" style="gap:8px"><h2 class="h2">' + esc(a) + ' · ' + rows.length + '</h2><div class="list">' + rows.map(groceryRow).join('') + '</div></section>');
       });
       if (basket.length) html.push('<section class="stack" style="gap:8px"><div class="row-between"><h2 class="h2">In the basket · ' + basket.length + '</h2><button class="textbtn" data-act="gclear">Clear basket</button></div><div class="list basket">' + basket.map(groceryRow).join('') + '</div></section>');
+    } else if (S.listSeg === 'grateful') {
+      var gr = (S.data.gratitude || []).slice().sort(function (a, b) { return String(b.day).localeCompare(String(a.day)) || String(b.created).localeCompare(String(a.created)); });
+      html.push('<div class="card pad stack grat"><b class="gq">What are you grateful for today?</b>' + gratitudeForm() + '</div>');
+      html.push('<div class="note">Private unless you share an entry. ' + esc(otherName()) + '’s shared ones show here too.</div>');
+      if (!gr.length) html.push('<div class="empty">Your gratitude list starts tonight. One line a day adds up.</div>');
+      var days = []; gr.forEach(function (g) { if (days.indexOf(g.day) < 0) days.push(g.day); });
+      days.forEach(function (dy) {
+        var rows = gr.filter(function (g) { return g.day === dy; });
+        html.push('<section class="stack" style="gap:8px"><h2 class="h2">' + esc(dy === todayKey() ? 'Today' : dayLabel(dy + 'T12:00:00')) + '</h2><ul class="list grlist">' + rows.map(grRow).join('') + '</ul></section>');
+      });
     } else {
       var open = openNotes(), done = notes.filter(function (n) { return n.status === 'done'; });
       html.push('<button class="btn big olive" data-act="jot">' + svg(I.plus, 20) + 'Jot something down</button>');
-      html.push('<div class="note">Only you see this list. Anything with a time gets a phone alert.</div>');
+      html.push('<div class="note">Only you see this list. Tap any jot to change it. Gentle ones never buzz.</div>');
       if (!open.length) html.push('<div class="empty">Nothing jotted. When a thought pops up, tap + and get it out of your head.</div>');
       else html.push('<div class="list">' + open.map(noteRow).join('') + '</div>');
       if (done.length) html.push('<section class="stack" style="gap:8px"><h2 class="h2">Done recently · ' + done.length + '</h2><div class="list basket">' + done.map(noteRow).join('') + '</div></section>');
@@ -782,43 +1074,61 @@
   function noteRow(n) {
     var done = n.status === 'done', over = !done && n.remindAt && Date.parse(n.remindAt) < Date.now();
     return '<div class="grow-row' + (done ? ' ticked' : '') + '"><button class="gcheck" data-act="' + (done ? 'noteundo' : 'notedone') + '" data-id="' + esc(n.id) + '" aria-pressed="' + done + '" aria-label="' + (done ? 'Not done: ' : 'Done: ') + esc(n.text) + '"><span class="box">' + (done ? svg(I.check, 16) : '') + '</span></button>' +
-      '<span class="col" style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0"><span class="gname">' + esc(n.text) + '</span>' +
-      (n.remindAt && !done ? '<span class="s' + (over ? ' late' : '') + '" style="font-size:.75rem">' + svg(I.bell, 12) + ' ' + (over ? 'Was due ' : '') + esc(whenLabel(n.remindAt)) + '</span>' : (done ? '' : '<span class="s" style="font-size:.75rem;color:var(--muted)">No reminder</span>')) + '</span>' +
+      (done ? '<span class="col" style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0">' : '<button class="col linkcol notecol" data-act="editnote" data-id="' + esc(n.id) + '" aria-label="Edit: ' + esc(n.text) + '">') + '<span class="gname">' + esc(n.text) + levelMark(n.level) + '</span>' +
+      (n.remindAt && !done ? '<span class="s' + (over ? ' late' : '') + '" style="font-size:.75rem">' + svg(I.bell, 12) + ' ' + (over ? 'Was due ' : '') + esc(whenLabel(n.remindAt)) + '</span>' : (done ? '' : '<span class="s" style="font-size:.75rem;color:var(--muted)">No time' + (n.level === 'gentle' ? ' \u00b7 gentle' : '') + '</span>')) + (done ? '</span>' : '</button>') +
       (done ? '<button class="fx" data-act="notedelete" data-id="' + esc(n.id) + '" aria-label="Delete ' + esc(n.text) + '">' + svg(I.x, 16) + '</button>' : '<button class="btn small" data-act="snoozenote" data-id="' + esc(n.id) + '">Later</button>') + '</div>';
   }
 
   function whenPicker(withNone) {
-    var opts = whenOptions().map(function (o) { return [o[0], o[1], whenLabel(o[2].toISOString())]; });
-    if (withNone) opts.push(['none', 'No reminder', '']);
-    opts.push(['pick', 'Pick a time', '']);
-    return '<div class="whens" role="radiogroup" aria-label="Remind me">' + opts.map(function (o) {
-      return '<button class="opt when" role="radio" aria-checked="' + (S.jotWhen === o[0]) + '" data-act="when" data-v="' + o[0] + '"><b>' + esc(o[1]) + '</b>' + (o[2] ? '<span>' + esc(o[2]) + '</span>' : '') + '</button>';
-    }).join('') + '</div>' +
+    var groups = {}, order = [];
+    function add(g, o) { if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(o); }
+    var ed = S.editId && noteById(S.editId);
+    if (ed && ed.remindAt && withNone) add('Set now', ['keep', 'Keep as is', whenLabel(ed.remindAt)]);
+    whenOptions().forEach(function (o) { add(o[3], [o[0], o[1], whenLabel(o[2].toISOString()).replace(/^(Today|Tomorrow) /, '')]); });
+    add('Later', ['pick', 'Pick a time', S.jotWhen === 'pick' && S.pickTime ? whenLabel(new Date(S.pickTime).toISOString()) : '']);
+    if (withNone) add('Later', ['none', 'No time', 'Just keep it on my list']);
+    return (S.jotGuessed && !S.jotWhenSet ? '<span class="note guess">' + svg(I.spark, 13) + ' Picked from what you wrote. Tap to change.</span>' : '') +
+      order.map(function (g) {
+        return '<div class="whengroup"><span class="wg">' + esc(g) + '</span><div class="whens" role="radiogroup" aria-label="' + esc(g) + '">' + groups[g].map(function (o) {
+          return '<button class="opt when" role="radio" aria-checked="' + (S.jotWhen === o[0]) + '" data-act="when" data-v="' + o[0] + '"><b>' + esc(o[1]) + '</b>' + (o[2] ? '<span>' + esc(o[2]) + '</span>' : '') + '</button>';
+        }).join('') + '</div></div>';
+      }).join('') +
       (S.jotWhen === 'pick' ? '<label class="field"><span class="h2" style="font-size:.75rem">Date and time</span><input id="pick-time" type="datetime-local" value="' + esc(S.pickTime || localInputValue(new Date(Date.now() + 3600000))) + '"></label>' : '');
   }
   function chosenWhen() {
     if (S.jotWhen === 'none' || !S.jotWhen) return '';
+    if (S.jotWhen === 'keep') { var ed = noteById(S.editId); return (ed && ed.remindAt) || ''; }
     if (S.jotWhen === 'pick') { var v = (document.getElementById('pick-time') || {}).value || S.pickTime; var t = v ? new Date(v) : null; return t && !isNaN(t) ? t.toISOString() : ''; }
     var o = whenOptions().filter(function (x) { return x[0] === S.jotWhen; })[0];
     return o ? o[2].toISOString() : '';
+  }
+  function levelChips() {
+    var lv = S.jotLevel || 'normal';
+    return '<div class="opts lv" role="radiogroup" aria-label="How important">' + [['gentle', 'Gentle', 'No alert'], ['normal', 'Normal', 'At the time'], ['important', 'Important', '30 min heads-up']].map(function (l) {
+      return '<button class="opt lvl lv-' + l[0] + '" role="radio" aria-checked="' + (lv === l[0]) + '" data-act="jlevel" data-v="' + l[0] + '"><b>' + l[1] + '</b><span>' + l[2] + '</span></button>';
+    }).join('') + '</div>' + (!S.jotLevelSet && !S.editId && (S.jotText || '').trim() ? '<span class="note guess">' + svg(I.spark, 13) + ' Guessed from what you wrote.</span>' : '');
   }
   function sheetWrap(label, inner) {
     var fresh = S.sheetFresh ? '' : ' style="animation:none"';
     return '<div class="scrim"' + fresh + '><button class="close-area" data-act="closesheet" aria-label="Close"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(label) + '"' + fresh + '><div class="grab" aria-hidden="true"></div>' + inner + '</div></div>';
   }
   function jotSheet() {
-    return sheetWrap('Jot it down', '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">Jot it down</h2><button class="textbtn" data-act="closesheet">Cancel</button></div>' +
-      '<label class="sr" for="jot-text">What do you need to remember?</label><textarea id="jot-text" rows="3" maxlength="500" placeholder="What\u2019s on your mind? e.g. Renew the car insurance">' + esc(S.jotText) + '</textarea>' +
-      '<div class="note" style="font-size:.8125rem;margin-top:-8px">Tip: tap the microphone on your keyboard to say it instead.</div>' +
-      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Remind me</span>' + whenPicker(true) + '</div>' +
-      '<div class="btns"><button class="btn" data-act="jotgrocery">' + svg(I.lists, 18) + 'It\u2019s shopping</button><button class="btn big primary x2" data-act="savejot">Save</button></div>');
+    var ed = S.editId && noteById(S.editId);
+    var title = ed ? 'Edit' : 'Jot it down';
+    return sheetWrap(title, '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">' + title + '</h2><button class="textbtn" data-act="closesheet">Cancel</button></div>' +
+      '<label class="sr" for="jot-text">What do you need to remember?</label><textarea id="jot-text" rows="3" maxlength="500" placeholder="What’s on your mind? e.g. Call the GP tomorrow morning">' + esc(S.jotText) + '</textarea>' +
+      (ed ? '' : '<div class="note" style="font-size:.8125rem;margin-top:-8px">Tip: say when, like “tomorrow at 3pm”, and I’ll set it.</div>') +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">How important?</span><div id="jot-level" class="stack" style="gap:6px">' + levelChips() + '</div></div>' +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">When</span><div id="jot-whenwrap" class="stack" style="gap:10px">' + whenPicker(true) + '</div></div>' +
+      (ed ? '<div class="btns"><button class="btn warn" data-act="notedelete" data-id="' + esc(ed.id) + '">Delete</button><button class="btn good" data-act="notedone" data-id="' + esc(ed.id) + '">' + svg(I.check, 16) + 'Done</button><button class="btn big primary x2" data-act="savejot">Save changes</button></div>'
+        : '<div class="btns"><button class="btn" data-act="jotgrocery">' + svg(I.lists, 18) + 'It’s shopping</button><button class="btn big primary x2" data-act="savejot">Save</button></div>'));
   }
   function snoozeSheet() {
     var it = S.sheetItem || {};
-    var title = it.kind === 'note' ? ((S.data.notes || []).filter(function (n) { return n.id === it.id; })[0] || {}).text : (findItem(it.id) || {}).title;
+    var title = it.kind === 'note' ? (noteById(it.id) || {}).text : (findItem(it.id) || {}).title;
     return sheetWrap('Remind me later', '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">Remind me later</h2><button class="textbtn" data-act="closesheet">Cancel</button></div>' +
       '<div class="why"><b>' + esc(title || '') + '</b><span class="note" style="font-size:.8125rem">It leaves your list for now and comes back with a phone alert.</span></div>' +
-      whenPicker(false) + (S.jotWhen === 'pick' ? '<button class="btn big primary" data-act="dosnooze">Set reminder</button>' : ''));
+      '<div class="stack" style="gap:10px">' + whenPicker(false) + '</div>' + (S.jotWhen === 'pick' ? '<button class="btn big primary" data-act="dosnooze">Set reminder</button>' : ''));
   }
 
   function whoChips() {
@@ -919,7 +1229,7 @@
       '<div class="me-card"><span class="obadge ' + me.cls + '" style="border:2px solid var(--o-fg)">' + esc(me.short) + '</span><span style="display:flex;flex-direction:column;gap:2px"><b>Signed in as ' + esc(S.name) + '</b><span style="font-size:.8125rem;font-weight:600">You see your own items and shared ones. Nobody else’s.</span></span></div>' +
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Light or dark</span>' + opts('theme', [['light', 'Light'], ['dark', 'Dark'], ['auto', 'Match phone']]) + '</div>' +
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Text size</span>' + opts('size', [['m', 'Aa', 'font-size:.95rem'], ['l', 'Aa', 'font-size:1.2rem'], ['xl', 'Aa', 'font-size:1.45rem']]) + '</div>' +
-      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Font</span>' + opts('font', [['cambria', 'Cambria', "font-family:'Cambria Math',Cambria,'Iowan Old Style',Georgia,serif"], ['sans', 'Rounded', "font-family:Nunito,system-ui,sans-serif"], ['easy', 'Easy-read', "font-family:'Atkinson Hyperlegible',Verdana,sans-serif"]]) + '</div>' +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Font</span>' + opts('font', [['calm', 'Calm', "font-family:ui-rounded,'Nunito',system-ui,sans-serif"], ['cambria', 'Cambria', "font-family:'Cambria Math',Cambria,'Iowan Old Style',Georgia,serif"], ['easy', 'Easy-read', "font-family:'Atkinson Hyperlegible',Verdana,sans-serif"]]) + '</div>' +
       '<div class="list">' + sw('hc', 'High contrast', 'Darker text and stronger edges') + sw('rm', 'Reduce motion', 'No slide or fade effects') + '</div>' +
       wellnessSection() +
       alertsSection() +
@@ -956,9 +1266,9 @@
       '<div class="card pad stack" style="box-shadow:none;gap:10px"><b>' + svg(I.bell, 16) + ' Reminders from Family EA</b>' +
       '<span class="note" style="font-size:.8125rem">Alerts come from the Family EA app itself and show the task, so you know what to do. Tap one to open the app.' + (a.devices ? ' On for ' + a.devices + ' device' + (a.devices === 1 ? '' : 's') + '.' : '') + '</span>' +
       state + '</div>' +
-      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Morning plan, 8am', 'Your 3 things for today, plus a quote or verse') + asw('evening', 'Evening check, 8pm', 'What\u2019s on tomorrow, and anything to jot down') + '</div></div>' +
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Your day, 8am', 'What\u2019s first, then a short list, plus a thought') + asw('evening', 'Gratitude, 8pm', 'What are you grateful for? Plus what tomorrow starts with') + '</div></div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Gentle nudges \u00b7 only when useful, at most 3 a day</span><div class="list">' +
-      asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still open, 5pm', 'Only if something due today is left') +
+      asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still to do, 5pm', 'Only if something due today was missed') +
       asw('week', 'Week ahead, Sunday 6pm', 'What\u2019s coming up in the next 7 days') + asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Quiet hours</span><div class="opts" role="radiogroup">' + [['22-7', '10pm\u20137am'], ['21-8', '9pm\u20138am'], ['off', 'Off']].map(function (q) {
         return '<button class="opt" role="radio" aria-checked="' + ((a.quiet || '22-7') === q[0]) + '" data-act="aquiet" data-v="' + q[0] + '">' + q[1] + '</button>'; }).join('') + '</div>' +
@@ -1086,6 +1396,15 @@
       var b = all.filter(function (x) { return x.owner === 'both'; });
       return { text: b.length ? 'These need you both:\n' + b.map(function (x, i) { return (i + 1) + '. ' + needsLine(x); }).join('\n') : 'Nothing needs you both right now.' };
     }
+    if (/what(’|')?s next|what is next|next up|what now/.test(t)) {
+      var dl = dayEntries().list.filter(function (e) { return e.at !== null && e.at >= Date.now() - 5 * 60000; });
+      if (dl.length) { var nx = dl[0], tip = prepTip(nx.text); return { text: 'Next up: ' + nx.text + ' at ' + hhmm(new Date(nx.at).toISOString()) + ' (' + inLabel(nx.at) + ').' + (tip ? '\n' + tip : '') + (dl.length > 1 ? '\nThen: ' + dl[1].text + ' at ' + hhmm(new Date(dl[1].at).toISOString()) + '.' : '') }; }
+      return { text: all.length ? 'Nothing timed for the rest of today. First thing that needs you: ' + needsLine(all[0]) + '.' : 'Nothing timed for the rest of today. Enjoy the breather.' };
+    }
+    if (/grateful|gratitude|thankful/.test(t)) {
+      var gl = (S.data.gratitude || []).filter(function (g) { return !g.from; }).slice(-5).reverse();
+      return { text: gl.length ? 'Your latest gratitude lines:\n' + gl.map(function (g) { return '• ' + g.text; }).join('\n') : 'Nothing yet. From 5pm, Today asks what you’re grateful for.' };
+    }
     if (/what needs me|needs my attention|on my plate|what (do|should) i (do|focus)|my (3|three) for today|to ?do today/.test(t)) {
       var mine = dueNotes().map(function (n) { return n.text + ' (reminder)'; }).concat(all.map(needsLine));
       return { text: mine.length ? 'Here’s what needs you:\n' + mine.slice(0, 8).map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') + (mine.length > 8 ? '\n…and ' + (mine.length - 8) + ' more on Today.' : '') : 'Nothing needs you right now. Enjoy the breather.' };
@@ -1185,11 +1504,15 @@
 
   /* ───────── quotes, water and mini challenges ───────── */
   var QUOTES = window.FEA_QUOTES || [];
+  var THEMES = []; QUOTES.forEach(function (q) { if (THEMES.indexOf(q.k) < 0) THEMES.push(q.k); });
+  function dayNum() { var n = new Date(); return Math.floor(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) / 86400000); }
+  function quoteTheme() { return S.quoteTheme || THEMES[dayNum() % Math.max(1, THEMES.length)]; }
+  function quotePool() { var k = quoteTheme(); var p = QUOTES.filter(function (q) { return q.k === k; }); return p.length ? p : QUOTES; }
   function quoteCard() {
     if (!S.prefs.quotes || !QUOTES.length) return '';
-    var q = QUOTES[S.quoteIdx % QUOTES.length];
-    return '<section class="card pad quote" aria-label="Thought for today"><div class="row-between"><span class="h2" style="font-size:.7rem;color:var(--olive)">' + svg(I.leaf, 13) + ' ' + esc(q.k || 'Thought') + '</span>' +
-      '<button class="textbtn" data-act="newquote" aria-label="Show another quote">' + svg(I.shuffle, 16) + '</button></div>' +
+    var pool = quotePool(), q = pool[S.quoteIdx % pool.length];
+    return '<section class="card pad quote" aria-label="Thought for today"><div class="row-between"><button class="qtheme" data-act="quotetheme" aria-label="Theme: ' + esc(q.k) + '. Tap for another theme">' + svg(I.leaf, 13) + '<span>' + (S.quoteTheme ? '' : 'Today · ') + esc(q.k || 'Thought') + '</span></button>' +
+      '<button class="textbtn" data-act="newquote" aria-label="Another on this theme">' + svg(I.shuffle, 16) + '</button></div>' +
       '<blockquote><p>“' + esc(q.t) + '”</p><footer>' + esc(q.a) + '</footer></blockquote></section>';
   }
   function todayKey() { var n = new Date(); return n.getFullYear() + '-' + pad(n.getMonth() + 1) + '-' + pad(n.getDate()); }
@@ -1311,7 +1634,7 @@
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
   function openSheet(name, item) { S.sheet = name; S.sheetItem = item || null; S.sheetFresh = true; S.unlinkAsk = false; renderOverlay(); }
-  function closeSheet() { S.sheet = null; S.sheetItem = null; renderOverlay(); }
+  function closeSheet() { S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
 
   function toast(text, opts) {
     opts = opts || {};
@@ -1391,7 +1714,8 @@
         item = findItem(id); closeSheet();
         if (item) { if (item.module === 'intel' || item.module === 'migration') { S.seg = item.module === 'migration' ? 'migration' : 'mine'; setTab('intel'); } else setTab({ houses: 'houses', plan: 'plan' }[item.module] || 'today'); }
         break;
-      case 'newquote': S.quoteIdx = (S.quoteIdx + 1 + Math.floor(Math.random() * Math.max(1, QUOTES.length - 1))) % Math.max(1, QUOTES.length); render(); break;
+      case 'newquote': var qn = quotePool().length; S.quoteIdx = qn > 1 ? (S.quoteIdx % qn + 1 + Math.floor(Math.random() * (qn - 1))) % qn : 0; render(); break;
+      case 'quotetheme': var ti = THEMES.indexOf(quoteTheme()); S.quoteTheme = THEMES[(ti + 1) % THEMES.length]; S.quoteIdx = Math.floor(Math.random() * 50); render(); break;
       case 'waterplus': addGlass(); break;
       case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); syncWater(); render(); } break;
       case 'canswer': answerChallenge(v); break;
@@ -1399,21 +1723,28 @@
       case 'settings': checkPush(); openSheet('settings'); var first = overlay.querySelector('.sheet button'); if (first) first.focus({ preventScroll: true }); break;
       case 'closesettings': case 'closesheet': closeSheet(); break;
       case 'jot':
-        S.jotText = ''; S.pickTime = ''; S.jotWhen = new Date().getHours() < 18 ? 'eve' : 'tom';
+        startJot('');
         openSheet('jot');
         var jt = document.getElementById('jot-text'); if (jt) jt.focus();
         break;
-      case 'when': S.jotWhen = v; if (S.sheet === 'snooze' && v !== 'pick') { doSnooze(); break; } renderOverlay(); break;
+      case 'when': S.jotWhen = v; if (S.sheet === 'snooze' && v !== 'pick') { doSnooze(); break; } if (S.sheet === 'jot') S.jotWhenSet = true; renderOverlay(); break;
+      case 'jlevel': S.jotLevel = v; S.jotLevelSet = true; var jl = document.getElementById('jot-level'); if (jl) jl.innerHTML = levelChips(); break;
+      case 'editnote': if (startEdit(id)) openSheet('jot'); break;
+      case 'grsharenew': S.grShare = !S.grShare; var gin = document.getElementById('gr-input'); if (gin) S.grText = gin.value; render(); break;
+      case 'grshare': grOp(id, 'share'); break;
+      case 'grdelete': grOp(id, 'delete'); break;
+      case 'grmore': S.grMore = true; render(); var gi2 = document.getElementById('gr-input'); if (gi2) gi2.focus(); break;
       case 'savejot': saveJot(); break;
       case 'jotgrocery': var jtxt = (document.getElementById('jot-text') || {}).value || ''; if (jtxt.trim()) { closeSheet(); addGrocery(jtxt); S.listSeg = 'groceries'; setTab('lists'); } else toast('Type what you need first.'); break;
       case 'snoozeitem': S.jotWhen = ''; openSheet('snooze', { kind: 'item', id: id }); break;
       case 'snoozenote': S.jotWhen = ''; openSheet('snooze', { kind: 'note', id: id }); break;
       case 'dosnooze': doSnooze(); break;
       case 'unsnooze': unsnooze(id); break;
+      case 'togglemissed': S.showMissed = !S.showMissed; render(); break;
       case 'togglesnoozed': S.showSnoozed = !S.showSnoozed; render(); break;
-      case 'notedone': noteOp(id, 'done'); break;
+      case 'notedone': if (S.sheet === 'jot') closeSheet(); noteOp(id, 'done'); break;
       case 'noteundo': noteOp(id, 'undo'); break;
-      case 'notedelete': noteOp(id, 'delete'); break;
+      case 'notedelete': if (S.sheet === 'jot') closeSheet(); noteOp(id, 'delete'); toast('Deleted.'); break;
       case 'listseg': S.listSeg = v; render(); break;
       case 'gtick': groceryOp(id, 'tick'); break;
       case 'guntick': groceryOp(id, 'untick'); break;
@@ -1469,21 +1800,23 @@
     IDB.set('cfg', null);
     if (pushSupported() && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { return r && r.pushManager.getSubscription(); }).then(function (sub) { if (sub) sub.unsubscribe(); }).catch(function () {});
     S.key = null; S.sheet = null; S.mode = 'link'; S.linkError = msg || '';
-    S.data = { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], doneToday: 0, alerts: {} };
+    S.data = { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], gratitude: [], doneToday: 0, alerts: {} };
     render(true);
   }
 
   var histTimer;
   function onInput(e) {
     if (e.target.id === 'chat-input') S.draft = e.target.value;
-    if (e.target.id === 'jot-text') S.jotText = e.target.value;
+    if (e.target.id === 'jot-text') { S.jotText = e.target.value; jotGuess(e.target.value); }
+    if (e.target.id === 'gr-input') S.grText = e.target.value;
     if (e.target.id === 'g-input') S.gText = e.target.value;
-    if (e.target.id === 'pick-time') S.pickTime = e.target.value;
+    if (e.target.id === 'pick-time') { S.pickTime = e.target.value; if (S.sheet === 'jot') S.jotWhenSet = true; }
     if (e.target.id === 'hist-q') { S.hq = e.target.value; clearTimeout(histTimer); histTimer = setTimeout(updateHistory, 160); }
     if (e.target.id === 'key-input' && S.linkError) { S.linkError = ''; }
   }
   function onSubmit(e) {
     if (e.target.id === 'chat-form') { e.preventDefault(); S.draft = document.getElementById('chat-input').value; sendChat(); }
+    if (e.target.id === 'gr-form') { e.preventDefault(); addGratitude(); }
     if (e.target.id === 'g-form') { e.preventDefault(); var gi = document.getElementById('g-input'); addGrocery(gi.value); }
   }
   function onKey(e) {

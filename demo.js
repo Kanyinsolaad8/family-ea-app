@@ -5,6 +5,7 @@
   var now = Date.now();
   function at(days, h, m) { var d = new Date(now + days * DAY); d.setHours(h || 9, m || 0, 0, 0); return d.toISOString(); }
   function monthsAgo(n, day) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); d.setDate(Math.min(day, 28)); d.setHours(10, 0, 0, 0); return d.toISOString(); }
+  function dayKey(days) { var d = new Date(now + days * DAY); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function canSee(viewer, owner) { return owner === viewer || owner === 'both' || owner === 'either'; }
 
   var store = {
@@ -25,6 +26,7 @@
         price: '£1,175 pcm', score: 84, listed: 'Rightmove', chips: ['Private garden', 'Driveway', '31 min to BS1'], decision: 'approve',
         why: 'Approved last week.', lifestyle: 'Gym 0.8 mi · Swimming pool 1.0 mi', rows: [['Location', 27, 30], ['Commute', 18, 20], ['Must-haves', 28, 30], ['Nice-to-haves', 11, 20]] } },
 
+      { id: 'p-bins', module: 'plan', for: 'either', status: 'open', title: 'Recycling out tonight', summary: 'Collection is first thing tomorrow.', due: at(0, 20, 30), created: at(-1), data: { kind: 'deadline' } },
       { id: 'p-mot', module: 'plan', for: 'either', status: 'open', title: 'Car MOT due', summary: 'From a garage email. Not in your calendar yet.', due: at(4, 9), created: at(-1), data: { kind: 'deadline' } },
       { id: 'p-clash', module: 'plan', for: 'ayo', status: 'open', title: 'Cycling at 9:00 clashes with day trip', summary: 'You agreed cycling by email. The Family calendar has a day trip from 8:00.', due: at(5, 9), created: at(-1), data: { kind: 'clash', options: [{ id: 'a', label: 'Keep the trip, move cycling' }, { id: 'b', label: 'Keep cycling, trip from 12:00' }] } },
       { id: 'p-view', module: 'plan', for: 'both', status: 'open', title: 'House viewing, Yate', summary: '34 min drive · leave 16:50', due: at(8, 17, 30), created: at(0), data: { kind: 'event' } },
@@ -63,9 +65,12 @@
     ].map(function (h, i) { return { id: 'hist-' + i, date: monthsAgo(h[0], h[1]), module: h[2], for: h[3], title: h[4], outcome: h[5], detail: h[6] }; }),
     queue: [],
     notes: [
-      { id: 'n1', text: 'Renew the car insurance', created: at(-1), remindAt: at(0, 19), status: 'open' },
-      { id: 'n2', text: 'Ask Tunde about the moving van', created: at(-2), remindAt: at(2, 18), status: 'open' },
-      { id: 'n3', text: 'Gift idea: cookbook for Mum', created: at(-3), remindAt: '', status: 'open' }
+      { id: 'n1', text: 'Renew the car insurance', created: at(-1), remindAt: at(0, 19), status: 'open', level: 'important' },
+      { id: 'n2', text: 'Ask Tunde about the moving van', created: at(-2), remindAt: at(2, 18), status: 'open', level: 'normal' },
+      { id: 'n3', text: 'Gift idea: cookbook for Mum', created: at(-3), remindAt: '', status: 'open', level: 'gentle' },
+      { id: 'n4', text: 'Email the landlord about the boiler', created: at(-1), remindAt: '', status: 'open', level: 'normal' },
+      { id: 'n5', text: 'Call the GP surgery about the letter', created: at(0, 7), remindAt: at(0, 10, 30), status: 'open', level: 'important' },
+      { id: 'n6', text: 'Pick up the dry cleaning', created: at(0, 7), remindAt: at(0, 15), status: 'open', level: 'normal' }
     ],
     groceries: [
       { id: 'g1', name: 'Milk', qty: '2', aisle: 'Dairy & eggs', addedBy: 'itunu', created: at(-1), ticked: false },
@@ -75,12 +80,18 @@
       { id: 'g5', name: 'Washing up liquid', qty: '', aisle: 'Household', addedBy: 'ayo', created: at(-2), ticked: true, tickedBy: 'itunu' }
     ],
     snoozes: [],
+    gratitude: [
+      { id: 'gr1', person: 'ayo', day: dayKey(-1), text: 'A slow breakfast with Itunu before work.', shared: true, created: at(-1, 20) },
+      { id: 'gr2', person: 'ayo', day: dayKey(-2), text: 'The viewing went better than expected.', shared: false, created: at(-2, 20) },
+      { id: 'gr3', person: 'itunu', day: dayKey(-1), text: 'Finished my French lesson without notes.', shared: true, created: at(-1, 21) },
+      { id: 'gr4', person: 'itunu', day: dayKey(-1), text: 'Private to Itunu.', shared: false, created: at(-1, 21) }
+    ],
     doneToday: 2,
     alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, water: true, open5: true, week: true, reply: true, quiet: '22-7', paused: false },
     messages: [
-      { id: 'd1', ts: at(0, 8, 2), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
-      { id: 'd2', ts: at(0, 12, 41), from: 'me', text: 'Book a viewing for the Yate house next week, after work.', status: 'answered' },
-      { id: 'd3', ts: at(0, 13, 0), from: 'ea', text: 'Done. I’ve held a slot at 17:30 (leave 16:50).\nThe agent message is ready for you to send. I never contact agents myself.' }
+      { id: 'd1', ts: new Date(now - 5 * 3600000).toISOString(), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
+      { id: 'd2', ts: new Date(now - 3 * 3600000).toISOString(), from: 'me', text: 'Book a viewing for the Yate house next week, after work.', status: 'answered' },
+      { id: 'd3', ts: new Date(now - 2.6 * 3600000).toISOString(), from: 'ea', text: 'Done. I’ve held a slot at 17:30 (leave 16:50).\nThe agent message is ready for you to send. I never contact agents myself.' }
     ]
   };
 
@@ -103,7 +114,8 @@
             .sort(function (a, b) { return a.date < b.date ? 1 : -1; }),
           queue: store.queue, messages: store.messages,
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
-          snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts
+          snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
+          gratitude: store.gratitude.filter(function (g) { return g.person && (g.person === p || g.shared); }).map(function (g) { return { id: g.id, day: g.day, text: g.text, shared: !!g.shared, from: g.person === p ? '' : g.person, created: g.created }; })
         });
       });
     },
@@ -132,7 +144,7 @@
           if (body.op === 'add') {
             if (!String(body.text || '').trim()) return { ok: false, error: 'empty' };
             var nid = 'n' + Date.now();
-            store.notes.push({ id: nid, text: String(body.text).trim(), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open' });
+            store.notes.push({ id: nid, text: String(body.text).trim(), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open', level: body.level || 'normal' });
             return { ok: true, id: nid, remindAt: body.remindAt || '' };
           }
           var n = store.notes.filter(function (x) { return x.id === body.id; })[0];
@@ -141,7 +153,21 @@
           if (body.op === 'undo') { n.status = 'open'; store.doneToday = Math.max(0, store.doneToday - 1); }
           if (body.op === 'snooze') n.remindAt = body.remindAt;
           if (body.op === 'delete') n.status = 'deleted';
+          if (body.op === 'edit') { if ('text' in body) n.text = String(body.text).trim(); if ('remindAt' in body) n.remindAt = body.remindAt || ''; if ('level' in body) n.level = body.level; }
           return { ok: true, id: n.id };
+        }
+        if (body.type === 'gratitude') {
+          if (body.op === 'add') {
+            if (!String(body.text || '').trim()) return { ok: false, error: 'empty' };
+            var grid = 'gr' + Date.now(), dk = dayKey(0);
+            store.gratitude.push({ id: grid, person: p, day: dk, text: String(body.text).trim(), shared: !!body.shared, created: new Date().toISOString() });
+            return { ok: true, id: grid, day: dk };
+          }
+          var gg = store.gratitude.filter(function (x) { return x.id === body.id && x.person === p; })[0];
+          if (!gg) return { ok: false, error: 'not_found' };
+          if (body.op === 'share') gg.shared = !!body.shared;
+          if (body.op === 'delete') { gg.person = ''; gg.text = ''; }
+          return { ok: true, id: gg.id };
         }
         if (body.type === 'grocery') {
           if (body.op === 'add') {
