@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.9.0';
+  var VERSION = '2.1.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -217,7 +217,7 @@
   var S = {
     mode: 'loading', demo: false, key: LS.get('fea.key', null), person: null, name: '',
     data: { items: [], history: [], queue: [], messages: [], runs: {}, lastSync: '', notes: [], groceries: [], snoozes: [], gratitude: [], doneToday: 0, alerts: {} },
-    tab: LS.get('fea.tab', 'today'), who: 'all', houseFilter: 'new', openScore: {}, seg: 'mine',
+    tab: LS.get('fea.tab', 'today'), who: 'all', hIdx: 0, hAnim: '', hShowRej: false, hViewPick: null, openScore: {}, seg: 'mine',
     month: 'all', mod: 'all', hq: '', histOpen: null, draft: '', files: [], ref: null, reading: 0,
     sheet: null, sheetItem: null, sheetFresh: false, unlinkAsk: false,
     jotText: '', jotWhen: '', pickTime: '', jotLevel: 'normal', jotLevelSet: false, jotWhenSet: false, jotGuessed: false, editId: null, grText: '', grShare: false, grMore: false, listSeg: 'groceries', gText: '', showSnoozed: false, lastDone: 0,
@@ -272,6 +272,7 @@
   };
 
   function accept(res, startedAt) {
+    var oldHouses = {}; ((S.data && S.data.items) || []).forEach(function (i) { if (i.module === 'houses') oldHouses[i.id] = i; });
     var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin, food: S.data.food, vents: S.data.vents } : null;
     S.data = {
       items: (res.items || []).filter(function (i) { return canSee(i.for); }).map(function (i) { i.data = i.data || {}; return i; }),
@@ -281,6 +282,7 @@
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
       events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || []
     };
+    if (keep) S.data.items.forEach(function (i) { var o = oldHouses[i.id]; if (o) { i.data = o.data; i.status = o.status; } });
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
     (S.localNotes || []).forEach(function (n) { if (!S.data.notes.some(function (x) { return x.id === n.id; })) S.data.notes.push(n); });
     (S.localVents || []).forEach(function (v) { if (!S.data.vents.some(function (x) { return x.id === v.id; })) S.data.vents.push(v); });
@@ -337,15 +339,24 @@
     var p = S.pending[id]; if (!p) return Promise.resolve();
     clearTimeout(p.timer); delete S.pending[id];
     var item = S.data.items.filter(function (i) { return i.id === id; })[0];
-    if (item) { item.status = 'queued'; if (item.module === 'houses') item.data.decision = p.action; if (p.action.indexOf('option:') === 0) item.data.choice = p.action.slice(7); }
+    if (item && item.module === 'houses') S.gChangedAt = Date.now();
+    var prevH = item && item.module === 'houses' ? JSON.stringify({ status: item.status, data: item.data }) : '';
+    if (item) {
+      item.status = 'queued';
+      if (item.module === 'houses') {
+        if (p.action === 'restore') { delete item.data.decision; delete item.data.stage; delete item.data.viewingAt; item.status = 'open'; }
+        else { item.data.decision = p.action; if (p.action === 'approve') { item.data.stage = 'shortlisted'; item.data.stageAt = new Date().toISOString(); item.data.stages = (item.data.stages || []).concat([{ s: 'shortlisted', at: item.data.stageAt, by: S.person }]); } }
+      }
+      if (p.action.indexOf('option:') === 0) item.data.choice = p.action.slice(7);
+    }
     S.data.queue.push({ id: 'tmp-' + id, itemId: id, text: p.label, ts: new Date().toISOString() });
     render();
     return api.post({ type: 'action', itemId: id, action: p.action, label: p.label }).then(function (res) {
       if (!res || !res.ok) throw new Error(res && res.error);
       S.data.queue.forEach(function (q) { if (q.id === 'tmp-' + id) q.id = res.id; });
-      toast('Sent to your EA · acts around ' + nextRun());
+      toast(item && item.module === 'houses' ? (p.action === 'approve' ? 'On your shortlist. Your EA drafts the agent message.' : p.action === 'restore' ? 'Back in New homes.' : 'Rejected. It won’t come back.') : 'Sent to your EA · acts around ' + nextRun());
     }).catch(function () {
-      if (item) { item.status = 'open'; if (item.data) { delete item.data.decision; delete item.data.choice; } }
+      if (item && prevH) { var pv = JSON.parse(prevH); item.status = pv.status; item.data = pv.data; } else if (item) { item.status = 'open'; if (item.data) { delete item.data.decision; delete item.data.choice; } }
       S.data.queue = S.data.queue.filter(function (q) { return q.id !== 'tmp-' + id; });
       toast('Couldn’t send. Check your connection and try again.');
     }).then(function () { render(); });
@@ -855,17 +866,13 @@
   }
 
   /* ───────── derived data ───────── */
-  function houseState(i) {
-    if (S.pending[i.id]) return 'pending';
-    if (i.status === 'open') return 'new';
-    return i.status; // queued | done | read
-  }
-  function houseDecision(i) { return (S.pending[i.id] && S.pending[i.id].action) || (i.data && i.data.decision) || ''; }
 
   function needs() {
     var out = [];
-    var newHouses = items('houses').filter(function (i) { return houseState(i) === 'new' && !isSnoozed(i.id); });
-    if (newHouses.length) out.push({ owner: 'both', rank: 2, title: newHouses.length + ' new house match' + (newHouses.length === 1 ? '' : 'es'), sub: 'Approve, skip or never', go: 'houses' });
+    var newHouses = houseNew().filter(function (i) { return !isSnoozed(i.id); });
+    if (newHouses.length) out.push({ owner: 'both', rank: 2, title: newHouses.length + ' new home' + (newHouses.length === 1 ? '' : 's') + ' to look at', sub: 'Shortlist or reject, one at a time', go: 'houses' });
+    var toContact = houseShort().filter(function (i) { return houseStage(i) === 'shortlisted'; });
+    if (toContact.length) out.push({ owner: 'both', rank: 3, title: 'Contact the agent' + (toContact.length === 1 ? ': ' + hPlace(toContact[0]) : ' for ' + toContact.length + ' shortlisted homes'), sub: 'Tick it in Houses once you have', go: 'houses' });
     items('plan').filter(function (i) { return i.status === 'open' && !S.pending[i.id] && !isSnoozed(i.id); }).forEach(function (i) {
       var clash = i.data.kind === 'clash';
       out.push({ id: i.id, owner: i.for, rank: clash ? 0 : 1, due: i.due, title: (clash ? 'Clash: ' : '') + i.title, sub: dayLabel(i.due) + (clash ? ' · pick one' : i.summary ? ' · ' + i.summary : ''), go: 'plan' });
@@ -897,7 +904,8 @@
     var cal = okWho('both') ? calEvents().filter(function (e) { return Date.parse(e.end || e.start) >= Date.now(); }).map(function (e) { return { cal: true, id: e.id, title: e.title, due: e.start, end: e.end, allDay: e.allDay, location: e.location, for: 'both' }; }) : [];
     var jots = openNotes().filter(function (n) { var t = Date.parse(n.remindAt); return t > endOfToday().getTime() && okWho(n.shared ? 'both' : S.person); })
       .map(function (n) { return { jot: true, id: n.id, title: n.text, due: n.remindAt, for: n.shared ? 'both' : S.person, n: n }; });
-    items('plan').filter(function (i) { return okWho(i.for); }).concat(cal, jots).sort(function (a, b) { return String(new Date(a.due).toISOString()).localeCompare(String(new Date(b.due).toISOString())); }).forEach(function (i) {
+    var hv = okWho('both') ? houseViewings().filter(function (v) { return Date.parse(v.due) >= dayStart(new Date()).getTime(); }) : [];
+    items('plan').filter(function (i) { return okWho(i.for); }).concat(cal, jots, hv).sort(function (a, b) { return String(new Date(a.due).toISOString()).localeCompare(String(new Date(b.due).toISOString())); }).forEach(function (i) {
       var t = d(i.due);
       var g = !t ? 4 : t < today ? 0 : t < endThis ? 1 : t < endNext ? 2 : t < endAfter ? 3 : 4;
       groups[g][1].push(i);
@@ -936,7 +944,7 @@
     var me = owner(S.person);
     return '<header class="top"><div class="top-row"><div style="min-width:0">' +
       '<h1>' + esc(titles[S.tab] || '') + '</h1></div>' +
-      '<div class="hbtns">' +
+      '<div class="hbtns">' + (S.tab !== 'ask' ? '<button class="hjot" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 22) + '</button>' : '') +
       '<button class="avatar ' + me.cls + '" data-act="settings" aria-label="Your settings and accessibility">' + esc(me.short) + '<span class="cog">' + svg(I.cog, 12) + '</span></button></div></div>' +
       '<div class="sync" id="sync">' + syncInner() + '</div></header>';
   }
@@ -949,7 +957,7 @@
   function paintSync() { var el = document.getElementById('sync'); if (el) el.innerHTML = syncInner(); }
 
   function nav() {
-    var newHouses = items('houses').filter(function (i) { return houseState(i) === 'new'; }).length;
+    var newHouses = houseNew().length;
     var clashes = items('plan').filter(function (i) { return i.status === 'open' && i.data.kind === 'clash' && !S.pending[i.id]; }).length;
     return '<nav class="tabs" aria-label="Sections">' + TABS.map(function (t) {
       var badge = t[0] === 'houses' ? newHouses : t[0] === 'plan' ? clashes : 0;
@@ -1333,7 +1341,7 @@
   }
   function ventPane() {
     var mine = ventsToday();
-    return (mine.length ? '<ul class="grlist">' + mine.map(ventRow).join('') + '</ul>' + (S.ventMore ? ventForm() : '<button class="textbtn" data-act="ventmore">Add another</button>') : ventForm());
+    return (mine.length ? '<ul class="grlist">' + mine.map(ventRow).join('') + '</ul>' + (S.ventMore ? ventForm() : '<button class="textbtn" data-act="ventmore">Add another</button><span class="grshnote">' + svg(I.leaf, 12) + ' Only you ever see these.</span>') : ventForm());
   }
   function addVent() {
     var el = document.getElementById('vent-input'), text = ((el && el.value) || S.ventText || '').replace(/\s+/g, ' ').trim();
@@ -1384,48 +1392,135 @@
     return false;
   }
 
-  function today() {
-    var all = needs();
+  /* ───────── Today as a bento: everything for the day on one screen; each tile opens its full card as a sheet ───────── */
+  function whoListHtml(items, who) {
+    return '<section class="stack"><h2 class="h2">' + (who === 'all' ? 'Everything else' : esc(owner(who).label)) + ' · ' + items.length + '</h2>' +
+      (items.length ? '<div class="list">' + items.map(function (n) {
+        var w = owner(n.owner);
+        return '<button class="rowbtn" data-act="go" data-v="' + n.go + '"><span class="obadge ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
+          '<span class="col"><span class="t">' + esc(n.title) + '</span><span class="s">' + esc((n.jot ? 'Jot · ' : '') + n.sub) + '</span><span>' + ochip(n.owner) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
+      }).join('') + '</div>' : '<div class="allclear">' + svg(I.check, 20) + 'All clear. Nothing needs you here.</div>') + '</section>';
+  }
+  function countedNeeds() {
     var jots = openNotes().map(function (n) { return { owner: n.shared ? 'both' : S.person, title: n.text, sub: n.remindAt ? whenLabel(n.remindAt) : 'No time set', go: 'lists', jot: true }; });
-    var counted = all.concat(jots);
-    var tiles = [S.person, 'both', 'either'].map(function (o) {
-      var w = owner(o), n = counted.filter(function (x) { return x.owner === o; }).length;
-      var sub = o === S.person ? 'Just for you' : o === 'both' ? 'Needs you together' : 'Whoever’s free';
-      return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '" aria-label="' + n + ' for ' + esc(w.label) + '"><span class="n">' + n + '</span><span class="l">' + (o === S.person ? 'for you' : o === 'both' ? 'together' : 'either') + '</span><span class="s">' + sub + '</span></button>';
+    return needs().concat(jots);
+  }
+  function askWho(counted) {
+    var n = unreadCount();
+    var chips = [S.person, 'both', 'either'].map(function (o) {
+      var c = counted.filter(function (x) { return x.owner === o; }).length, w = owner(o), word = o === S.person ? 'you' : o === 'both' ? 'both' : 'either';
+      return '<button class="whochip ' + w.cls + '" data-act="whosheet" data-v="' + o + '" aria-label="' + c + ' for ' + esc(w.label) + '"><b>' + c + '</b><span>' + word + '</span></button>';
     }).join('');
-    var list = (S.who === 'all' ? all : counted).filter(function (x) { return okWho(x.owner); });
-    var html = [askBar()];
-    // Who needs to act: right at the top, and tapping a tile shows its list straight underneath.
-    html.push('<section class="tiles compact" aria-label="Who needs to act">' + tiles + '</section>');
-    // A pause before the to-dos: calm and gratitude are always in view when the app opens.
-    html.push(windDownCard() || calmCard());
-    html.push(gratitudeCard());
-    function whoList(items) {
-      return '<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + items.length + '</h2>' +
-        (S.who !== 'all' ? '<button class="textbtn" data-act="who" data-v="all">Show all</button>' : '') + '</div>' +
-        (items.length ? '<div class="list">' + items.map(function (n) {
-          var w = owner(n.owner);
-          return '<button class="rowbtn" data-act="go" data-v="' + n.go + '"><span class="obadge ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
-            '<span class="col"><span class="t">' + esc(n.title) + '</span><span class="s">' + esc((n.jot ? 'Jot \u00b7 ' : '') + n.sub) + '</span><span>' + ochip(n.owner) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
-        }).join('') + '</div>' : '<div class="allclear">' + svg(I.check, 20) + 'All clear. Nothing else needs you here.</div>') + '</section>';
+    return '<div class="askw t-in" style="--i:0"><button class="askin" data-act="openask" aria-label="' + (n ? 'New reply from your EA' : 'Ask your EA') + '">' + svg(n ? I.chat : I.spark, 18) + '<span>' + (n ? 'New reply' : 'Ask your EA…') + '</span>' + (n ? '<span class="hdot static" aria-label="New reply"></span>' : '') + '</button><div class="whos" role="group" aria-label="Who needs to act">' + chips + '</div></div>';
+  }
+  function nextPick() {
+    var d0 = dayEntries(), entries = d0.list, timed = entries.filter(function (e) { return e.at !== null; });
+    var next = timed.filter(function (e) { return !e.late; })[0] || null, need = null;
+    if (!next) need = needs().filter(function (x) { return x.go !== 'ask'; })[0] || null;
+    if (!next && !need) next = entries.filter(function (e) { return e.at === null; })[0] || timed.filter(function (e) { return e.late; }).slice(-1)[0] || null;
+    return { next: next, need: need, more: Math.max(0, entries.length - (next ? 1 : 0)) + (d0.more || 0) };
+  }
+  function nextTile(i) {
+    var p = nextPick(), x = p.next, nd = p.need, tm, tl, title, sub, right;
+    if (x) {
+      title = x.text;
+      if (x.at === null) { tm = '<b>Any</b>'; tl = x.suggested ? 'Suggested' : 'time'; }
+      else { tm = '<b>' + esc(hhmm(new Date(x.at).toISOString())) + '</b>'; var mn = Math.round((x.at - Date.now()) / 60000); tl = x.late ? 'Missed' : mn < 15 ? 'Now' : mn < 60 ? 'in ' + mn + 'm' : 'in ' + Math.round(mn / 60) + 'h'; }
+      sub = x.kind === 'cal' ? x.sub : x.kind === 'note' ? (x.suggested ? 'Suggested · ' + x.suggested : 'Jot') + (x.level === 'important' ? ' · important' : '') : (x.sub || 'From your EA');
+      right = x.kind === 'note' ? '<button class="ntick" data-act="notedone" data-id="' + esc(x.id) + '" aria-label="Done: ' + esc(x.text) + '">' + svg(I.check, 18) + '</button>'
+        : '<button class="ntick go" data-act="go" data-v="' + esc(x.go || 'plan') + '" aria-label="Open">' + svg(I.chev, 18) + '</button>';
+    } else if (nd) {
+      title = nd.title; tm = '<b>' + svg(I.bell, 18) + '</b>'; tl = 'To do'; sub = nd.sub || '';
+      right = '<button class="ntick go" data-act="go" data-v="' + esc(nd.go) + '" aria-label="Open">' + svg(I.chev, 18) + '</button>';
     }
-    if (S.who !== 'all') html.push(whoList(list));
+    if (!x && !nd) return '<div class="tile2 next empty t-in" style="--i:' + i + '"><div class="mid"><span class="lbl">Next up</span><h3>Nothing planned</h3><p>Got a thought? Tap + to jot it down.</p></div></div>';
+    return '<div class="tile2 next t-in' + (x && x.late ? ' late' : '') + '" style="--i:' + i + '"><div class="tm">' + tm + '<span>' + tl + '</span></div>' +
+      '<button class="mid" data-act="tilesheet" data-v="day" aria-label="Your day: ' + esc(title) + '"><span class="lbl">' + (x ? 'Next up' : 'Needs you') + (p.more ? ' · ' + p.more + ' more today ›' : ' ›') + '</span><h3>' + esc(clip(title, 60)) + '</h3><p>' + esc(clip(sub, 60)) + '</p></button>' + right + '</div>';
+  }
+  function calmTile(i) {
+    var d = new Date(), mins = d.getHours() * 60 + d.getMinutes(), wind = mins >= 21 * 60 + 30 || mins < 4 * 60;
+    var m = calmSlot(), done = calmDone(), dn = Math.floor((Date.now() + 3600000) / 86400000), text = m.list[dn % m.list.length];
+    var dots = MINDFUL.map(function (x) { return '<i class="' + (done[x.key] ? 'on' : '') + (x === m ? ' cur' : '') + '"></i>'; }).join('');
+    var label = wind ? 'Wind-down' : m.title.replace(/^Evening /, ''), body, btns;
+    if (wind && LS.get('fea.windDown', '') === todayKey()) { body = 'Phone away. Goodnight, ' + S.name + '.'; btns = ''; }
+    else if (wind) {
+      var tf = tomorrowFirst();
+      body = tf ? 'Tomorrow: ' + tf.text + ' at ' + hhmm(new Date(tf.at).toISOString()) + '. It’s noted, so let it go for tonight.' : 'Nothing early tomorrow. You can let today go.';
+      btns = '<button class="cb" data-act="breathe">' + svg(I.wind, 15) + 'Breathe</button><button class="cb g cdone" data-act="phoneaway" aria-label="Phone away for the night">' + svg(I.moon, 16) + '</button>';
+    } else if (done[m.key]) {
+      var next = MINDFUL[(MINDFUL.indexOf(m) + 1) % MINDFUL.length];
+      body = 'Done for now. ' + (m !== MINDFUL[2] ? 'Next: ' + next.title.toLowerCase() + ' at ' + next.at + '.' : 'Rest well.'); btns = '<button class="cb" data-act="breathe">' + svg(I.wind, 15) + 'Again</button>';
+    } else { body = text; btns = '<button class="cb" data-act="breathe">' + svg(I.wind, 15) + 'Breathe</button><button class="cb g cdone" data-act="calmdone" aria-label="I did it">' + svg(I.check, 16) + '</button>'; }
+    return '<section class="tile2 calm2 t-in" style="--i:' + i + '" aria-label="Calm: ' + esc(label) + '"><span class="orb" aria-hidden="true"></span><div class="row-between"><span class="lbl">' + esc(label) + '</span><span class="cdots2" aria-label="' + Object.keys(done).length + ' of 3 calm moments today">' + dots + '</span></div>' +
+      '<button class="ctext" data-act="tilesheet" data-v="calm">' + esc(body) + '</button><div class="cbtns">' + btns + '</div></section>';
+  }
+  function gratTile(i) {
+    var vt = S.grTab === 'vent', mine = (S.data.gratitude || []).filter(function (g) { return !g.from && g.day === todayKey(); }), nv = ventsToday().length;
+    var pr = vt ? VENT_PROMPTS[(Math.floor(Date.now() / 86400000) + (S.ventIdx || 0)) % VENT_PROMPTS.length] : gratPrompt();
+    var n = vt ? nv : mine.length;
+    return '<section class="tile2 grat2 t-in' + (vt ? ' vent' : '') + '" style="--i:' + i + '" aria-label="Journal"><div class="gtabs" role="tablist" aria-label="Journal"><button role="tab" data-act="grtab" data-id="grat" aria-selected="' + !vt + '">' + svg(I.heart, 12) + 'Grateful</button><button role="tab" data-act="grtab" data-id="vent" aria-selected="' + vt + '">Didn’t like</button></div>' +
+      '<button class="gq2" data-act="' + (vt ? 'ventprompt' : 'grprompt') + '" aria-label="Prompt: ' + esc(pr) + '. Tap for another">“' + esc(pr) + '”</button>' +
+      '<button class="gcount" data-act="tilesheet" data-v="grat" aria-label="Open your journal">' + (n ? n + ' today' : 'Your journal') + ' \u203a</button>' +
+      '<form class="gform" id="' + (vt ? 'vtt-form' : 'grt-form') + '" autocomplete="off"><label class="sr" for="' + (vt ? 'vtt-input' : 'grt-input') + '">' + (vt ? 'Something you didn’t like today' : gratQuestion()) + '</label><input id="' + (vt ? 'vtt-input' : 'grt-input') + '" maxlength="300" enterkeyhint="done" placeholder="One line…"><button class="send" type="submit" aria-label="Save">' + svg(I.check, 18) + '</button></form>' +
+      '<span class="gnote">' + (vt ? 'Only you ever see these' : 'Private unless you share ›') + '</span></section>';
+  }
+  function waterTile(i) {
+    var goal = waterGoal(), have = glasses(), pct = Math.min(100, Math.round(100 * have / goal)), from = S.lastWaterPct === undefined ? pct : S.lastWaterPct;
+    S.lastWaterPct = pct;
+    return '<section class="tile2 water2 t-in" style="--i:' + i + '" aria-label="Water: ' + have + ' of ' + goal + ' glasses"><button class="lbl wl" data-act="tilesheet" data-v="water">Water ›</button>' +
+      '<span class="glass" aria-hidden="true"><i data-fill="' + pct + '" style="height:' + from + '%"></i></span><b class="wn">' + have + '<small>/' + goal + '</small></b>' +
+      '<button class="wplus" data-act="waterplus" aria-label="Add a glass">' + svg(I.plus, 18) + '</button></section>';
+  }
+  function foodTile(i) {
+    if (!FD) return '';
+    var slot = foodSlot(), tonight = dinnerFor(new Date().getDay());
+    var label = { breakfast: 'Breakfast idea', lunch: 'Lunch idea', snack: 'Snack idea', dinner: 'Tonight', late: 'If you’re peckish' }[slot];
+    var main = slot === 'dinner' ? { name: tonight.name, mins: tonight.m && tonight.m.mins, kcal: tonight.m && tonight.m.kcal, note: tonight.kind === 'base' ? 'Reheat' : tonight.kind === 'batch' ? 'Batch day' : tonight.kind === 'treat' ? 'Order in' : '' } : foodIdea(slot);
+    var meta = [main.note && main.note.length < 20 ? main.note : '', main.mins ? main.mins + ' min' : '', main.kcal ? '~' + main.kcal + ' kcal' : ''].filter(Boolean).join(' · ');
+    return '<button class="tile2 food2 t-in" style="--i:' + i + '" data-act="tilesheet" data-v="food" aria-label="Food: ' + esc(label + ', ' + main.name) + '"><span class="plate" aria-hidden="true"></span><span class="fcol"><span class="lbl">' + esc(label) + '</span><b>' + esc(clip(main.name, 44)) + '</b>' + (meta ? '<small>' + esc(meta) + '</small>' : '') + '</span></button>';
+  }
+  function growTile(i) {
+    var h = habits(), k = kv('kind', {}), due = dueContact(), done = h.list.filter(function (x) { return habitDone(h, x.id); }).length;
+    var extra = k.done !== todayKey() ? 'Kindness idea waiting' : due ? 'Call ' + due.c.name : '';
+    if (!h.list.length) return '<button class="tile2 grow2 t-in" style="--i:' + i + '" data-act="tilesheet" data-v="grow"><span class="fcol"><span class="lbl">Grow</span><b>Pick a tiny habit</b><small>' + esc(extra || 'Rest days allowed') + '</small></span><span class="gplus" aria-hidden="true">' + svg(I.plus, 18) + '</span></button>';
+    return '<section class="tile2 grow2 t-in" style="--i:' + i + '" aria-label="Grow"><button class="fcol" data-act="tilesheet" data-v="grow"><span class="lbl">Grow ›</span><b>' + done + ' of ' + h.list.length + ' habits</b>' + (extra ? '<small>' + esc(extra) + '</small>' : '') + '</button>' +
+      '<span class="hdots">' + h.list.map(function (x) { var on = habitDone(h, x.id); return '<button class="hdot2' + (on ? ' on' : '') + '" data-act="habit" data-id="' + esc(x.id) + '" aria-pressed="' + on + '" aria-label="' + esc(x.name) + '">' + (on ? svg(I.check, 16) : esc(x.name.charAt(0).toUpperCase())) + '</button>'; }).join('') + '</span></section>';
+  }
+  function verseTile(i) {
+    if (!S.prefs.quotes || !QUOTES.length) return '';
+    var pool = quotePool(), q = pool[S.quoteIdx % pool.length];
+    return '<section class="tile2 verse t-in" style="--i:' + i + '" aria-label="Thought for today"><div class="row-between"><button class="lbl qtheme2" data-act="quotetheme" aria-label="Theme: ' + esc(q.k) + '. Tap for another on this theme">' + esc(q.k || 'Thought for today') + '</button><button class="vshuf" data-act="newquote" aria-label="Another quote">' + svg(I.shuffle, 16) + '</button></div>' +
+      '<p>“' + esc(q.t) + '”</p><small>' + esc(q.a) + '</small></section>';
+  }
+  function noticeTiles() {
+    var out = [], dow = new Date().getDay(), c = S.data.checkin || {}, wk = checkinWeek();
+    if (checkinCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="checkin">' + svg(I.heart, 16) + '<span><b>Weekly check-in</b><small>' + (c.week === wk && c.mine ? (c.theirs ? 'You’ve both answered — have a look' : 'Waiting for ' + esc(otherName())) : 'Three short questions for you both') + '</small></span>' + svg(I.chev, 16) + '</button>');
+    if (lookBackCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="lookback">' + svg(I.history, 16) + '<span><b>Your week, looking back</b><small>Grateful and didn’t-like lines, only you</small></span>' + svg(I.chev, 16) + '</button>');
+    return out.join('');
+  }
+  function tileSheet() {
+    var k = (S.sheetItem || {}).k, v = (S.sheetItem || {}).v, title = '', body = '';
+    if (k === 'day') { title = 'Your day'; body = yourDay(needs()).html; }
+    else if (k === 'who') { var list = countedNeeds().filter(function (x) { return x.owner === v; }); title = owner(v).label; body = whoListHtml(list, v); }
+    else if (k === 'grat') { title = S.grTab === 'vent' ? 'Didn’t like' : 'Gratitude'; body = gratitudeCard(); }
+    else if (k === 'water') { title = 'Water'; body = waterCard(); }
+    else if (k === 'food') { title = 'Food'; body = foodCard() + '<button class="btn" data-act="foodplan">' + svg(I.plan, 16) + 'The week plan and shopping</button>'; }
+    else if (k === 'grow') { title = 'Grow'; S.growOpen = true; body = growCard(); }
+    else if (k === 'checkin') { title = 'Weekly check-in'; body = checkinCard(); }
+    else if (k === 'lookback') { title = 'Looking back'; body = lookBackCard(); }
+    else if (k === 'calm') { title = 'Calm'; body = calmCard(); }
+    return sheetWrap(title, '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">' + esc(title) + '</h2><button class="textbtn" data-act="closesheet">Done</button></div>' + body);
+  }
+  function today() {
+    var counted = countedNeeds(), html = [askWho(counted)];
     if (!S.demo && !isStandalone() && !S.installHidden) {
       html.push('<section class="card pad stack" aria-label="Install"><div class="row-between"><b>Add to your Home Screen</b><button class="textbtn" data-act="hideinstall">Hide</button></div>' +
         '<div class="note">In Safari, tap Share, then “Add to Home Screen”. Open it from there and paste your key once more.</div>' +
         '<button class="btn small olive" data-act="copykey">Copy my key</button></section>');
     }
-    // "Your day": what's next, then the rest of today by morning, afternoon and evening.
-    var day = yourDay(all);
-    html.push(day.html);
-    var fc = foodCard(); if (fc) html.push(fc);
-    var ci = checkinCard(); if (ci) html.push(ci);
-    var lb = lookBackCard(); if (lb) html.push(lb);
-    html.push(growCard());
-    var qc = quoteCard(); if (qc) html.push(qc);
-    html.push(waterCard());
-    if (S.who === 'all') html.push(whoList(list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; })));
-
+    var t = [verseTile(1), nextTile(2), calmTile(3), gratTile(4), waterTile(5), foodTile(6), growTile(7)].join('');
+    html.push('<div class="bento" aria-label="Today">' + t + '</div>');
+    var nt = noticeTiles(); if (nt) html.push('<div class="notices">' + nt + '</div>');
     var q = S.data.queue.concat(Object.keys(S.pending).map(function (id) { return { text: S.pending[id].label + ' (sending)' }; }));
     if (q.length) {
       html.push('<section class="stack"><h2 class="h2">Waiting for your EA · ' + q.length + '</h2><div class="list">' + q.map(function (x) {
@@ -1439,12 +1534,48 @@
           return '<div class="qrow"><span class="col" style="display:flex;flex-direction:column;flex:1;min-width:0"><b>' + esc(i.title) + '</b><span class="note" style="font-size:.75rem">Back ' + esc(whenLabel(snoozeOf(i.id).until)) + '</span></span><button class="btn small" data-act="unsnooze" data-id="' + esc(i.id) + '">Bring back</button></div>';
         }).join('') + '</div>' : '') + '</section>');
     }
-    var recent = S.data.history.slice(0, 4);
+    var recent = S.data.history.slice(0, 3);
     html.push('<section class="stack"><div class="row-between"><h2 class="h2">Latest from your EA</h2><button class="textbtn" data-act="tab" data-v="history">Full history</button></div>' +
       (recent.length ? '<div class="list">' + recent.map(function (h) {
         return '<button class="feed" data-act="report" data-id="' + esc(h.id) + '"><span class="when">' + esc(relWhen(h.date)) + '</span><span class="col" style="display:flex;flex-direction:column;gap:2px"><b style="font-size:.875rem">' + esc(h.title) + '</b><span class="note" style="font-size:.8125rem">' + esc(h.outcome) + '</span></span></button>';
       }).join('') + '</div>' : '<div class="empty">Your EA’s updates will appear here after its next run.</div>') + '</section>');
     return html;
+  }
+  function bentoClick(act, id, v, el) {
+    switch (act) {
+      case 'tilesheet': openTileSheet(v, el); return true;
+      case 'whosheet': S.sheetItem = null; openTileSheet('who', el, v); return true;
+    }
+    return false;
+  }
+  // The tapped tile grows into the sheet (View Transitions where the phone supports them; a soft slide otherwise).
+  function openTileSheet(k, el, v) {
+    var go = function () { openSheet('tile', { k: k, v: v }); };
+    var reduce = document.documentElement.classList.contains('rm') || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var tile = el && el.closest ? el.closest('.tile2,.notice,.whochip') : null;
+    if (!document.startViewTransition || reduce || !tile) { go(); return; }
+    tile.style.viewTransitionName = 'grow-tile';
+    var vt = document.startViewTransition(function () { tile.style.viewTransitionName = ''; go(); var sh = overlay.querySelector('.sheet'); if (sh) { sh.style.animation = 'none'; sh.style.viewTransitionName = 'grow-tile'; } });
+    vt.finished.then(function () { var sh = overlay.querySelector('.sheet'); if (sh) sh.style.viewTransitionName = ''; }).catch(function () {});
+  }
+  // Swipe a sheet down to close it.
+  function sheetSwipe() {
+    var y0 = null, dy = 0, sh = null;
+    overlay.addEventListener('touchstart', function (e) {
+      sh = e.target.closest && e.target.closest('.sheet'); if (!sh || sh.scrollTop > 0 || S.sheet === 'breathe') { sh = null; return; }
+      if (e.target.closest('input,textarea,select')) { sh = null; return; }
+      y0 = e.touches[0].clientY; dy = 0; sh.style.transition = 'none';
+    }, { passive: true });
+    overlay.addEventListener('touchmove', function (e) {
+      if (!sh || y0 === null) return; dy = Math.max(0, e.touches[0].clientY - y0);
+      if (dy > 4) sh.style.transform = 'translateY(' + dy + 'px)';
+    }, { passive: true });
+    overlay.addEventListener('touchend', function () {
+      if (!sh) return; sh.style.transition = 'transform .28s cubic-bezier(.2,.8,.2,1)';
+      if (dy > 110) { sh.style.transform = 'translateY(100%)'; setTimeout(function () { closeSheet(); render(); }, 220); }
+      else sh.style.transform = '';
+      y0 = null; sh = null;
+    }, { passive: true });
   }
 
   function slotOf(ms) { var h = new Date(ms).getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; }
@@ -1463,6 +1594,10 @@
     items('plan').filter(function (i) { return i.status === 'open' && !S.pending[i.id] && !isSnoozed(i.id) && i.due; }).forEach(function (i) {
       var t = Date.parse(i.due); if (isNaN(t) || t < start || t > end) return;
       out.push({ kind: 'item', id: i.id, text: (i.data.kind === 'clash' ? 'Clash: ' : '') + i.title, sub: i.summary || '', at: t, slot: slotOf(t), late: t < now - 5 * 60000, level: i.data.kind === 'clash' ? 'important' : 'normal', go: 'plan' });
+    });
+    houseViewings().forEach(function (v) {
+      var t = Date.parse(v.due); if (isNaN(t) || t < start || t > end || t < now - 2 * 3600000) return;
+      out.push({ kind: 'cal', id: v.id, text: v.title, sub: 'House viewing' + (v.price ? ' \u00b7 ' + v.price : ''), at: t, slot: slotOf(t), late: false, go: 'houses' });
     });
     calEvents().forEach(function (e) {
       var t = Date.parse(e.start), te = Date.parse(e.end) || t; if (isNaN(t) || t > end || te < start || te < now) return;
@@ -1767,47 +1902,170 @@
     return '<svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="var(--line)" stroke-width="3"/><circle class="ring" cx="32" cy="32" r="29" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 32 32)"/></svg>';
   }
 
-  function houses() {
-    var all = items('houses');
-    var buckets = {
-      new: all.filter(function (i) { var s = houseState(i); return s === 'new' || s === 'pending'; }),
-      short: all.filter(function (i) { var s = houseState(i); return s !== 'new' && s !== 'pending' && houseDecision(i) === 'approve'; }),
-      gone: all.filter(function (i) { var s = houseState(i); return s !== 'new' && s !== 'pending' && (houseDecision(i) === 'skip' || houseDecision(i) === 'never'); })
-    };
-    var html = [askBar(), '<div class="chips wrap" role="group" aria-label="Show">' + [['new', 'New'], ['short', 'Shortlist'], ['gone', 'Discarded']].map(function (f) {
-      return '<button class="fchip" data-act="hfilter" data-v="' + f[0] + '" aria-pressed="' + (S.houseFilter === f[0]) + '">' + f[1] + ' · ' + buckets[f[0]].length + '</button>';
-    }).join('') + '</div>'];
-    var list = buckets[S.houseFilter] || [];
-    if (!list.length) html.push('<div class="empty">' + (S.houseFilter === 'new' ? 'No new matches right now. Your EA searches every day around 12:30 and 4:30pm.' : 'Nothing here yet.') + '</div>');
-    list.forEach(function (i) {
-      var x = i.data || {}, st = houseState(i), dec = houseDecision(i), open = !!S.openScore[i.id];
-      var rows = (x.rows || []).map(function (r) {
-        var pct = r[2] ? Math.round(r[1] / r[2] * 100) : 0;
-        return '<div><div class="row-between" style="font-size:.8125rem"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '/' + esc(r[2]) + '</b></div><div class="bar"><i data-w="' + pct + '" style="width:' + (open ? pct : 0) + '%"></i></div></div>';
-      }).join('');
-      var listing = safeUrl(x.listingUrl), map = safeUrl(x.mapUrl);
-      var status = '';
-      if (st === 'pending') {
-        var p = S.pending[i.id], el = Date.now() - p.start;
-        status = '<div class="status pending">' + esc(p.label) + ' in a moment<button class="btn small" data-act="undo" data-id="' + esc(i.id) + '">Undo</button></div><div class="countdown"><i style="animation-duration:' + PENDING_MS + 'ms;animation-delay:-' + el + 'ms"></i></div>';
-      } else if (st === 'queued') {
-        status = '<div class="status queued">' + svg(I.check, 18) + 'Sent. Your EA acts around ' + nextRun() + '.</div>';
-      } else if (st === 'done') {
-        status = '<div class="status ' + (dec === 'never' ? 'never' : 'done') + '">' + svg(I.check, 18) + esc(i.outcome || 'Done by your EA') + '</div>';
-      }
-      html.push('<article class="card house">' +
-        '<div style="display:flex;gap:12px;align-items:flex-start"><div class="grow"><div class="price">' + esc(x.price || '') + '</div><div style="font-weight:700">' + esc(i.title) + '</div>' + (i.summary ? '<div style="font-size:.875rem">' + esc(i.summary) + '</div>' : '') + '<div class="note" style="font-size:.8125rem">' + esc(x.listed || dayLabel(i.created)) + '</div></div>' +
+  /* ───────── House search: one new home at a time, then a shortlist you move step by step ───────── */
+  var HSTEPS = [['shortlisted', 'Shortlisted'], ['contacted', 'Agent contacted'], ['viewing', 'Viewing booked'], ['viewed', 'Viewed'], ['applied', 'Applied'], ['won', 'Got it']];
+  var HNEXT = { shortlisted: ['contacted', 'We’ve contacted the agent'], contacted: ['viewing', 'Viewing booked'], viewing: ['viewed', 'We’ve viewed it'], viewed: ['applied', 'We’ve applied'], applied: ['won', 'We got it'] };
+  var HWAIT = { shortlisted: 'Not contacted yet · your EA drafts the message for you to send', contacted: 'Waiting to hear back or book a viewing', viewing: 'Viewing booked', viewed: 'Decide whether to apply', applied: 'Waiting for the agent’s answer', won: 'Yours', lost: 'Didn’t get it' };
+  function isRejectDecision(dcs) { return dcs === 'reject' || dcs === 'skip' || dcs === 'never'; }
+  function houseBucket(i) {
+    var p = S.pending[i.id];
+    if (p) return p.action === 'approve' ? 'short' : p.action === 'restore' ? 'new' : 'rejected';
+    var dcs = (i.data || {}).decision || '';
+    if (isRejectDecision(dcs)) return 'rejected';
+    if (dcs === 'approve') return /^(won|lost)$/.test(i.data.stage || '') ? 'finished' : 'short';
+    return 'new';
+  }
+  function houseStage(i) { return (S.pending[i.id] && S.pending[i.id].action === 'approve') ? 'shortlisted' : (i.data.stage || 'shortlisted'); }
+  function houseNew() {
+    return items('houses').filter(function (i) { return houseBucket(i) === 'new'; })
+      .sort(function (a, b) { return (+b.data.score || 0) - (+a.data.score || 0); });
+  }
+  function houseShort() { return items('houses').filter(function (i) { return houseBucket(i) === 'short'; }); }
+  function hPlace(i) { return (i.title.split(',')[1] || i.title).replace(/·.*$/, '').trim(); }
+  function viewingLabel(iso) { var t = d(iso); return t ? DOW[t.getDay()] + ' ' + t.getDate() + ' ' + MON[t.getMonth()] + ' at ' + hhmm(iso) : ''; }
+  function houseDetail(i, inSheet) {
+    var x = i.data || {}, open = !!S.openScore[i.id];
+    var rows = (x.rows || []).map(function (r) {
+      var pct = r[2] ? Math.round(r[1] / r[2] * 100) : 0;
+      return '<div><div class="row-between" style="font-size:.8125rem"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '/' + esc(r[2]) + '</b></div><div class="bar"><i data-w="' + pct + '" style="width:' + (open ? pct : 0) + '%"></i></div></div>';
+    }).join('');
+    var listing = safeUrl(x.listingUrl), map = safeUrl(x.mapUrl);
+    return '<div class="hhead"><div class="grow" style="min-width:0"><div class="price">' + esc(x.price || '') + '</div><h3 class="htitle">' + esc(i.title) + '</h3>' +
+        (i.summary ? '<div class="hsum">' + esc(i.summary) + '</div>' : '') + '<div class="note" style="font-size:.8125rem">' + esc(x.listed || dayLabel(i.created)) + '</div></div>' +
         '<div class="score" aria-label="Score ' + esc(x.score) + ' out of 100">' + scoreRing(x.score) + '<b>' + esc(x.score || '–') + '</b><span>/100</span></div></div>' +
-        '<div class="tags">' + ochip(i.for) + (x.chips || []).map(function (c) { return '<span class="soft">' + esc(c) + '</span>'; }).join('') + '</div>' +
-        (x.why || x.lifestyle ? '<div class="why"><span class="h2" style="font-size:.75rem">Why this one</span><span>' + esc(x.why || '') + '</span>' + (x.gap ? '<span style="font-size:.875rem"><b>Watch out:</b> ' + esc(x.gap) + '</span>' : '') + (x.lifestyle ? '<span class="note" style="font-size:.8125rem">' + esc(x.lifestyle) + '</span>' : '') + '</div>' : '') +
-        (rows ? '<button class="row-between textbtn" style="color:var(--ink);min-height:44px;width:100%" data-act="score" data-id="' + esc(i.id) + '" aria-expanded="' + open + '"><span>Score breakdown</span><span style="color:var(--accentInk)">' + (open ? 'Hide' : 'Show') + '</span></button>' +
-          '<div class="bars' + (open ? ' open' : '') + '" id="bars-' + esc(i.id) + '"><div>' + rows + '</div></div>' : '') +
-        ((listing || map) ? '<div class="btns">' + (listing ? '<a class="btn" href="' + esc(listing) + '" target="_blank" rel="noopener">View listing ' + svg(I.ext, 14) + '</a>' : '') + (map ? '<a class="btn" href="' + esc(map) + '" target="_blank" rel="noopener">Commute map ' + svg(I.ext, 14) + '</a>' : '') + '</div>' : '') +
-        attachBtn(i) +
-        (st === 'new' ? '<div class="btns"><button class="btn big primary x2" data-act="house" data-id="' + esc(i.id) + '" data-v="approve">Approve</button><button class="btn big" data-act="house" data-id="' + esc(i.id) + '" data-v="skip">Skip</button><button class="btn big warn" data-act="house" data-id="' + esc(i.id) + '" data-v="never">Never</button></div>' : status) +
-        '</article>');
+      ((x.chips || []).length ? '<div class="tags">' + (x.chips || []).map(function (c) { return '<span class="soft">' + esc(c) + '</span>'; }).join('') + '</div>' : '') +
+      (x.why || x.gap || x.lifestyle ? '<div class="why">' + (x.why ? '<span class="h2" style="font-size:.75rem">Why this one</span><span>' + esc(x.why) + '</span>' : '') + (x.gap ? '<span class="hgap"><b>Watch out:</b> ' + esc(x.gap) + '</span>' : '') + (x.lifestyle ? '<span class="note" style="font-size:.8125rem">' + esc(x.lifestyle) + '</span>' : '') + '</div>' : '') +
+      (rows ? '<button class="row-between textbtn" style="color:var(--ink);min-height:44px;width:100%" data-act="score" data-id="' + esc(i.id) + '" aria-expanded="' + open + '"><span>Score breakdown</span><span style="color:var(--accentInk)">' + (open ? 'Hide' : 'Show') + '</span></button>' +
+        '<div class="bars' + (open ? ' open' : '') + '" id="bars-' + esc(i.id) + (inSheet ? '-s' : '') + '"><div>' + rows + '</div></div>' : '') +
+      ((listing || map) ? '<div class="btns hlinks">' + (listing ? '<a class="btn" href="' + esc(listing) + '" target="_blank" rel="noopener">View listing ' + svg(I.ext, 14) + '</a>' : '') + (map ? '<a class="btn" href="' + esc(map) + '" target="_blank" rel="noopener">Commute ' + svg(I.ext, 14) + '</a>' : '') + '</div>' : '');
+  }
+  function hStepper(i) {
+    var st = houseStage(i), lost = st === 'lost', at = {};
+    (i.data.stages || []).forEach(function (h) { at[h.s] = h.at; });
+    var idx = lost ? 5 : HSTEPS.map(function (s) { return s[0]; }).indexOf(st);
+    return '<ol class="hsteps" aria-label="Progress">' + HSTEPS.map(function (s, k) {
+      var done = k <= idx, cur = k === idx + 1;
+      if (lost && s[0] === 'won') s = ['lost', 'Didn’t get it'];
+      var when = s[0] === 'viewing' && i.data.viewingAt ? viewingLabel(i.data.viewingAt) : at[s[0]] ? dayLabel(at[s[0]]) : '';
+      return '<li class="' + (done ? 'done' : cur ? 'cur' : '') + (lost && s[0] === 'lost' ? ' lost' : '') + '"' + (cur ? ' aria-current="step"' : '') + '><span class="hsdot">' + (done ? svg(I.check, 12) : '') + '</span><span class="hl">' + esc(s[1]) + (when ? '<small>' + esc(when) + '</small>' : '') + '</span></li>';
+    }).join('') + '</ol>';
+  }
+  function houseSheet() {
+    var i = findItem((S.sheetItem || {}).id);
+    if (!i) return sheetWrap('Home', '<div class="row-between"><h2 style="margin:0">Home</h2><button class="textbtn" data-act="closesheet">Done</button></div><div class="empty">This home is no longer in the app.</div>');
+    var st = houseStage(i), nx = HNEXT[st], body = '';
+    if (houseBucket(i) === 'short' || houseBucket(i) === 'finished') {
+      body += '<section class="hprog card pad stack"><h3 class="h2" style="margin:0">Where you are</h3>' + hStepper(i);
+      if (S.pending[i.id]) {
+        body += '<div class="status pending">' + esc(S.pending[i.id].label) + ' \u00b7 sending in a moment<button class="btn small" data-act="undo" data-id="' + esc(i.id) + '">Undo</button></div>';
+      } else if (S.hViewPick === i.id) {
+        var def = new Date(Date.now() + 2 * 86400000); def.setHours(10, 0, 0, 0);
+        var v0 = def.getFullYear() + '-' + pad(def.getMonth() + 1) + '-' + pad(def.getDate()) + 'T10:00', tdy = new Date(), vmin = tdy.getFullYear() + '-' + pad(tdy.getMonth() + 1) + '-' + pad(tdy.getDate());
+        body += '<label class="hvpick"><span>When is the viewing?</span><input type="datetime-local" id="hv-time" value="' + v0 + '" min="' + vmin + 'T00:00"></label>' +
+          '<div class="btns"><button class="btn big primary" data-act="hvsave" data-id="' + esc(i.id) + '">Save</button><button class="btn big" data-act="hvcancel">Cancel</button></div>';
+      } else if (nx) {
+        body += '<button class="btn big primary hnext" data-act="hstep" data-id="' + esc(i.id) + '" data-v="' + nx[0] + '">' + svg(I.check, 18) + esc(nx[1]) + '</button>' +
+          (st !== 'shortlisted' ? '<button class="btn big" data-act="hstep" data-id="' + esc(i.id) + '" data-v="lost">' + (st === 'applied' ? 'We didn\u2019t get it' : 'It\u2019s gone or we didn\u2019t get it') + '</button>' : '') +
+          (st === 'shortlisted' ? '<div class="note">Your EA drafts the enquiry for you to send. It never contacts agents itself.</div>' : '');
+      }
+      if (houseBucket(i) === 'short' && !S.pending[i.id]) body += '<button class="textbtn hdrop" data-act="hreject" data-id="' + esc(i.id) + '">Not for us — reject this home</button>';
+      body += '</section>';
+    }
+    return sheetWrap(i.title, '<div class="row-between"><h2 style="margin:0;font-size:1.2rem">' + esc(hPlace(i)) + '</h2><button class="textbtn" data-act="closesheet">Done</button></div>' + body + '<article class="card house">' + houseDetail(i, true) + attachBtn(i) + '</article>');
+  }
+  function houses() {
+    var all = items('houses'), fresh = houseNew(), shortl = houseShort();
+    var rejected = all.filter(function (i) { return houseBucket(i) === 'rejected'; }), finished = all.filter(function (i) { return houseBucket(i) === 'finished'; });
+    var html = [askBar()];
+    // 1. New homes, one at a time
+    if (S.hIdx >= fresh.length) S.hIdx = Math.max(0, fresh.length - 1);
+    var cur = fresh[S.hIdx || 0];
+    html.push('<section class="stack" aria-label="New homes"><div class="row-between hbar"><h2 class="h2">' + (fresh.length ? 'New homes' : 'New homes · none') + '</h2>' +
+      (fresh.length ? '<div class="hnav"><button class="hnb" data-act="hprev" aria-label="Previous home"' + (S.hIdx > 0 ? '' : ' disabled') + '>' + svg('<path d="M15 6l-6 6 6 6"/>', 18) + '</button><b class="hcount" aria-live="polite">' + ((S.hIdx || 0) + 1) + ' of ' + fresh.length + '</b><button class="hnb" data-act="hnext" aria-label="Next home"' + (S.hIdx < fresh.length - 1 ? '' : ' disabled') + '>' + svg(I.chev, 18) + '</button></div>' : '') + '</div>');
+    if (!cur) html.push('<div class="empty">You’re all caught up. Your EA searches every day around 12:30 and 4:30pm.</div>');
+    else html.push('<article class="card house hcard' + (S.hAnim ? ' h-' + S.hAnim : '') + '" data-id="' + esc(cur.id) + '">' + houseDetail(cur) + attachBtn(cur) +
+      '<div class="hdecide"><button class="btn big hrej" data-act="hdecide" data-id="' + esc(cur.id) + '" data-v="reject">' + svg('<path d="M6 6l12 12M18 6L6 18"/>', 18) + 'Reject</button>' +
+      '<button class="btn big primary hok" data-act="hdecide" data-id="' + esc(cur.id) + '" data-v="approve">' + svg(I.check, 18) + 'Shortlist</button></div></article>');
+    if (fresh.length > 1) html.push('<div class="hpager" aria-hidden="true">' + fresh.slice(0, 12).map(function (x, k) { return '<i class="' + (k === S.hIdx ? 'on' : '') + '"></i>'; }).join('') + '</div>');
+    html.push('</section>');
+    S.hAnim = '';
+    // 2. Shortlist, grouped by step
+    var groups = HSTEPS.slice(0, 5).map(function (s) { return [s, shortl.filter(function (i) { return houseStage(i) === s[0]; })]; }).filter(function (g) { return g[1].length; });
+    html.push('<section class="stack" aria-label="Shortlist"><h2 class="h2">Shortlist · ' + shortl.length + '</h2>');
+    if (!shortl.length) html.push('<div class="empty">Homes you shortlist land here, so you can track the agent, viewing and application.</div>');
+    groups.forEach(function (g) {
+      html.push('<div class="hgroup"><div class="hgl"><span class="hgdot s-' + g[0][0] + '"></span>' + esc(g[0][1]) + ' · ' + g[1].length + '</div><div class="list">' + g[1].map(hRow).join('') + '</div></div>');
     });
+    if (finished.length) html.push('<div class="hgroup"><div class="hgl"><span class="hgdot s-won"></span>Finished · ' + finished.length + '</div><div class="list">' + finished.map(hRow).join('') + '</div></div>');
+    html.push('</section>');
+    // 3. Rejected, tucked away
+    if (rejected.length) {
+      html.push('<section class="stack"><button class="row-between textbtn hrejt" data-act="hshowrej" aria-expanded="' + !!S.hShowRej + '"><span class="h2">Rejected · ' + rejected.length + '</span><span style="color:var(--accentInk)">' + (S.hShowRej ? 'Hide' : 'Show') + '</span></button>' +
+        (S.hShowRej ? '<div class="list">' + rejected.map(function (i) {
+          var pend = S.pending[i.id];
+          return '<div class="qrow"><span style="display:flex;flex-direction:column;flex:1;min-width:0"><b>' + esc(i.title) + '</b><span class="note" style="font-size:.75rem">' + esc((i.data.price || '') + (pend ? ' · rejecting…' : ' · won’t come back')) + '</span></span>' +
+            (pend ? '' : '<button class="btn small hbb" data-act="hrestore" data-id="' + esc(i.id) + '">Bring back</button>') + '</div>';
+        }).join('') + '</div>' : '') + '</section>');
+    }
     return html;
+  }
+  function hRow(i) {
+    var st = houseStage(i), x = i.data || {};
+    var wait = st === 'viewing' && x.viewingAt ? 'Viewing ' + viewingLabel(x.viewingAt) : HWAIT[st] || '';
+    var nudge = st === 'shortlisted';
+    return '<button class="hrow" data-act="hopen" data-id="' + esc(i.id) + '"><span class="hrs">' + esc(x.score || '–') + '</span><span class="col" style="display:flex;flex-direction:column;flex:1;min-width:0;gap:2px">' +
+      '<b>' + esc(hPlace(i)) + ' · ' + esc(x.price || '') + '</b><span class="note' + (nudge ? ' hwait' : '') + '" style="font-size:.8125rem">' + esc(wait) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
+  }
+  function hStepPost(i, stage, viewingAt) {
+    if (S.pending[i.id]) { toast('One moment \u2014 still sending your last tap.'); return Promise.resolve(); }
+    S.gChangedAt = Date.now();
+    var old = { stage: i.data.stage, stageAt: i.data.stageAt, viewingAt: i.data.viewingAt, stages: (i.data.stages || []).slice() }, now = new Date().toISOString();
+    i.data.stage = stage; i.data.stageAt = now; if (viewingAt) i.data.viewingAt = viewingAt;
+    i.data.stages = old.stages.concat([{ s: stage, at: now, by: S.person }]);
+    S.hViewPick = null;
+    if (S.sheet === 'house') renderOverlay(); render();
+    var label = (HSTEPS.filter(function (s) { return s[0] === stage; })[0] || ['', 'Didn’t get it'])[1];
+    return api.post({ type: 'housestage', itemId: i.id, stage: stage, viewingAt: viewingAt || '' }).then(function (res) {
+      if (!res || !res.ok) throw new Error(res && res.error);
+      toast(stage === 'won' ? 'Congratulations! Marked as yours.' : label + ' · saved for you both');
+    }).catch(function () {
+      Object.keys(old).forEach(function (k) { if (old[k] === undefined) delete i.data[k]; else i.data[k] = old[k]; });
+      toast('Couldn’t save. Check your connection and try again.');
+      if (S.sheet === 'house') renderOverlay(); render();
+    });
+  }
+  function houseClick(act, id, v, el) {
+    var i = id ? findItem(id) : null, reduce = document.documentElement.classList.contains('rm') || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    switch (act) {
+      case 'hprev': S.hIdx = Math.max(0, (S.hIdx || 0) - 1); S.hAnim = 'back'; render(); return true;
+      case 'hnext': S.hIdx = (S.hIdx || 0) + 1; S.hAnim = 'fwd'; render(); return true;
+      case 'hdecide':
+        if (!i || S.pending[i.id]) return true;
+        var go = function () { S.hAnim = 'fwd'; queueAction(i, v, (v === 'approve' ? 'Shortlisted ' : 'Rejected ') + hPlace(i)); };
+        var card = el.closest('.hcard');
+        if (card && !reduce) { card.classList.add(v === 'approve' ? 'h-outok' : 'h-outrej'); setTimeout(go, 200); } else go();
+        return true;
+      case 'hopen': S.hViewPick = null; openSheet('house', { id: id }); return true;
+      case 'hstep':
+        if (!i) return true;
+        if (v === 'viewing') { S.hViewPick = i.id; renderOverlay(); setTimeout(function () { var t = document.getElementById('hv-time'); if (t) t.focus(); }, 60); return true; }
+        hStepPost(i, v); return true;
+      case 'hvsave':
+        var tv = (document.getElementById('hv-time') || {}).value, ms = tv ? new Date(tv).getTime() : NaN;
+        if (!i || isNaN(ms)) { toast('Pick a day and time for the viewing.'); return true; }
+        if (ms < Date.now() - 2 * 86400000) { toast('That date has passed. Pick the viewing day.'); return true; }
+        if (ms > Date.now() + 120 * 86400000) { toast('Pick a date in the next four months.'); return true; }
+        hStepPost(i, 'viewing', new Date(ms).toISOString()); return true;
+      case 'hvcancel': S.hViewPick = null; renderOverlay(); return true;
+      case 'hreject': if (!i) return true; closeSheet(); queueAction(i, 'reject', 'Rejected ' + hPlace(i)); return true;
+      case 'hrestore': if (!i) return true; queueAction(i, 'restore', 'Brought back ' + hPlace(i)); return true;
+      case 'hshowrej': S.hShowRej = !S.hShowRej; render(); return true;
+    }
+    return false;
+  }
+  function houseViewings() {
+    return houseShort().filter(function (i) { return houseStage(i) === 'viewing' && i.data.viewingAt; })
+      .map(function (i) { return { hv: true, id: 'hv-' + i.id, hid: i.id, title: 'Viewing: ' + hPlace(i), due: i.data.viewingAt, for: 'both', price: i.data.price }; });
   }
 
   function plan() {
@@ -1816,6 +2074,13 @@
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
       html.push('<section class="stack"><h2 class="h2">' + g[0] + '</h2>' + g[1].map(function (i) {
+        if (i.hv) {
+          var th = d(i.due);
+          return '<article class="card plan lite"><div class="date"><small>' + (th ? DOW[th.getDay()] : '\u2013') + '</small><b>' + (th ? th.getDate() : '') + '</b></div>' +
+            '<div class="grow"><div class="tags"><span class="tag t-cal">' + svg(I.houses, 11) + ' House viewing</span>' + ochip('both') + '</div>' +
+            '<b>' + esc(i.title) + '</b><div class="note" style="font-size:.8125rem">' + esc(hhmm(i.due) + (i.price ? ' \u00b7 ' + i.price : '')) + '</div>' +
+            '<div class="btns" style="justify-content:flex-start"><button class="btn small" style="flex:0 0 auto" data-act="hopen" data-id="' + esc(i.hid) + '">Open the home</button></div></div></article>';
+        }
         if (i.cal || i.jot) {
           var tt = d(i.due);
           return '<article class="card plan lite"><div class="date"><small>' + (tt ? DOW[tt.getDay()] : '\u2013') + '</small><b>' + (tt ? tt.getDate() : '') + '</b></div>' +
@@ -2533,7 +2798,7 @@
     view.setAttribute('data-tab', S.tab);
     view.innerHTML = header() +
       '<main id="main" class="' + (S.tab === 'ask' ? 'ask ' + (S.files.length || S.reading || S.ref ? 'tall ' : '') : '') + (anim ? 'enter' : '') + '">' + parts.map(function (h, i) { return anim ? stag(h, i) : h; }).join('') + '</main>' +
-      (S.tab === 'ask' ? composer() : '<button class="fab mini" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 24) + '<span>Jot it down</span></button>') + nav();
+      (S.tab === 'ask' ? composer() : '') + nav();
 
     main = document.getElementById('main');
     var fab = view.querySelector('.fab'), lastTop = 0;
@@ -2548,17 +2813,27 @@
     requestAnimationFrame(function () {
       document.querySelectorAll('.bars.open .bar i').forEach(function (b) { b.style.width = b.getAttribute('data-w') + '%'; });
     });
-    if (!S.sheet) overlay.innerHTML = '';
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      document.querySelectorAll('[data-fill]').forEach(function (f) { f.style.height = f.getAttribute('data-fill') + '%'; });
+    }); });
+    if (!S.sheet) { if (!overlay.querySelector('.scrim.out')) overlay.innerHTML = ''; } else if (S.sheet === 'tile' || (S.sheet === 'house' && !S.hViewPick)) renderOverlay();
   }
   function renderOverlay() {
     if (S.mode !== 'app' || !S.sheet) { overlay.innerHTML = ''; return; }
     var focusId = document.activeElement && overlay.contains(document.activeElement) ? document.activeElement.id : '';
-    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : S.sheet === 'grow' ? growSheet() : snoozeSheet();
+    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : S.sheet === 'grow' ? growSheet() : S.sheet === 'tile' ? tileSheet() : S.sheet === 'house' ? houseSheet() : snoozeSheet();
     S.sheetFresh = false;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
   function openSheet(name, item) { S.sheet = name; S.sheetItem = item || null; S.sheetFresh = true; S.unlinkAsk = false; renderOverlay(); }
-  function closeSheet() { if (S.sheet === 'breathe') { clearInterval(breathTimer); Calm.stop(); } S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
+  function closeSheet() {
+    if (S.sheet === 'breathe') { clearInterval(breathTimer); Calm.stop(); }
+    S.sheet = null; S.sheetItem = null; S.editId = null;
+    var sc = overlay && overlay.querySelector('.scrim'), reduce = document.documentElement.classList.contains('rm') || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (!sc || reduce) { renderOverlay(); return; }
+    sc.classList.add('out');
+    setTimeout(function () { if (!S.sheet && sc.parentNode === overlay) overlay.innerHTML = ''; }, 230);
+  }
 
   function toast(text, opts) {
     opts = opts || {};
@@ -2577,18 +2852,19 @@
     if (!el) return;
     var act = el.getAttribute('data-act'), v = el.getAttribute('data-v'), id = el.getAttribute('data-id');
     var item;
+    if (bentoClick(act, id, v, el)) return;
     if (growClick(act, id, v)) return;
     if (foodClick(act, v)) return;
     if (ventClick(act, id)) return;
+    if (houseClick(act, id, v, el)) return;
     switch (act) {
       case 'tab': setTab(v); break;
       case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;
       case 'go':
         if (v.indexOf('intel:') === 0) { S.seg = v.slice(6); setTab('intel'); }
-        else { if (v === 'houses') S.houseFilter = 'new'; setTab(v); }
+        else { if (v === 'houses') S.hIdx = 0; setTab(v); }
         break;
       case 'who': S.who = S.who === v && v !== 'all' ? 'all' : v; if (S.tab === 'history') updateHistory(); else render(); break;
-      case 'hfilter': S.houseFilter = v; render(); break;
       case 'score':
         S.openScore[id] = !S.openScore[id];
         var bars = document.getElementById('bars-' + id);
@@ -2597,11 +2873,6 @@
           el.lastChild.textContent = S.openScore[id] ? 'Hide' : 'Show';
           bars.querySelectorAll('.bar i').forEach(function (b) { b.style.width = S.openScore[id] ? b.getAttribute('data-w') + '%' : '0'; });
         }
-        break;
-      case 'house':
-        item = findItem(id); if (!item) break;
-        var place = (item.title.split(',')[1] || item.title).trim().split(' ')[0];
-        queueAction(item, v, { approve: 'Approve', skip: 'Skip', never: 'Never' }[v] + ' ' + place + ' house');
         break;
       case 'planact': item = findItem(id); if (item) queueAction(item, v, el.getAttribute('data-label') || v); break;
       case 'undo': cancelAction(id); toastEl.classList.remove('show'); break;
@@ -2764,6 +3035,8 @@
   function onSubmit(e) {
     if (growSubmit(e.target.id)) { e.preventDefault(); return; }
     if (e.target.id === 'vent-form') { e.preventDefault(); addVent(); return; }
+    if (e.target.id === 'grt-form') { e.preventDefault(); var gt = document.getElementById('grt-input'); S.grText = gt ? gt.value : ''; addGratitude(); return; }
+    if (e.target.id === 'vtt-form') { e.preventDefault(); var vtt = document.getElementById('vtt-input'); S.ventText = vtt ? vtt.value : ''; addVent(); return; }
     if (e.target.id === 'chat-form') { e.preventDefault(); S.draft = document.getElementById('chat-input').value; sendChat(); }
     if (e.target.id === 'gr-form') { e.preventDefault(); addGratitude(); }
     if (e.target.id === 'g-form') { e.preventDefault(); var gi = document.getElementById('g-input'); addGrocery(gi.value); }
@@ -2778,6 +3051,7 @@
     root = document.getElementById('app');
     root.innerHTML = '<div id="view" style="display:contents"></div><div id="overlay"></div><div id="toast" class="toast" role="status" aria-live="polite"></div>';
     view = document.getElementById('view'); overlay = document.getElementById('overlay'); toastEl = document.getElementById('toast');
+    sheetSwipe();
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('submit', onSubmit);

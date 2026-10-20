@@ -22,9 +22,15 @@
         price: '£1,195 pcm', score: 78, listed: 'OnTheMarket · listed today', chips: ['Private garden', 'Driveway', '41 min to BS1'],
         why: 'Biggest garden of the week. Close to the £1,200 ceiling, so little room on price.', lifestyle: 'Gym 1.4 mi · Swimming pool 1.6 mi',
         rows: [['Location', 23, 30], ['Commute', 14, 20], ['Must-haves', 30, 30], ['Nice-to-haves', 11, 20]], listingUrl: 'https://www.onthemarket.com/', mapUrl: 'https://maps.google.com/' } },
-      { id: 'h-port', module: 'houses', for: 'both', status: 'done', title: '3-bed semi, Portishead BS20', created: at(-6), outcome: 'In the tracker · viewing held', data: {
-        price: '£1,175 pcm', score: 84, listed: 'Rightmove', chips: ['Private garden', 'Driveway', '31 min to BS1'], decision: 'approve',
+      { id: 'h-port', module: 'houses', for: 'both', status: 'done', title: '3-bed semi, Portishead BS20', created: at(-6), outcome: 'In the tracker', summary: 'Down Road · £1,175 pcm · 31 min to BS1', data: {
+        price: '£1,175 pcm', score: 84, listed: 'Rightmove', chips: ['Private garden', 'Driveway', '31 min to BS1'], decision: 'approve', stage: 'viewing', viewingAt: at(2, 10, 30),
+        stages: [{ s: 'shortlisted', at: at(-6) }, { s: 'contacted', at: at(-5) }, { s: 'viewing', at: at(-3) }],
         why: 'Approved last week.', lifestyle: 'Gym 0.8 mi · Swimming pool 1.0 mi', rows: [['Location', 27, 30], ['Commute', 18, 20], ['Must-haves', 28, 30], ['Nice-to-haves', 11, 20]] } },
+
+      { id: 'h-brad', module: 'houses', for: 'both', status: 'done', title: '2-bed semi, Bradley Stoke BS32', created: at(-3), outcome: 'In the tracker', summary: 'Juniper Way · £1,050 pcm · 24 min to BS1', data: {
+        price: '£1,050 pcm', score: 83, listed: 'OpenRent', chips: ['Garden', 'Driveway', '24 min to BS1'], decision: 'approve', stage: 'shortlisted', stages: [{ s: 'shortlisted', at: at(-1) }],
+        why: 'Short commute and a driveway, £150 under budget.', gap: 'Garden is small and north-facing.', rows: [['Location', 24, 30], ['Commute', 19, 20], ['Must-haves', 28, 30], ['Nice-to-haves', 12, 20]], listingUrl: 'https://www.openrent.co.uk/', mapUrl: 'https://maps.google.com/' } },
+      { id: 'h-clev', module: 'houses', for: 'both', status: 'done', title: '2-bed flat, Clevedon BS21', created: at(-4), outcome: 'Rejected', data: { price: '£995 pcm', score: 72, decision: 'reject' } },
 
       { id: 'p-bins', module: 'plan', for: 'either', status: 'open', title: 'Recycling out tonight', summary: 'Collection is first thing tomorrow.', due: at(0, 20, 30), created: at(-1), data: { kind: 'deadline' } },
       { id: 'p-mot', module: 'plan', for: 'either', status: 'open', title: 'Car MOT due', summary: 'From a garage email. Not in your calendar yet.', due: at(4, 9), created: at(-1), data: { kind: 'deadline' } },
@@ -213,6 +219,13 @@
         }
         if (body.type === 'prefs') { ['morning', 'evening', 'midday', 'water', 'open5', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
+        if (body.type === 'housestage') {
+          var hi = store.items.filter(function (i) { return i.id === body.itemId && i.module === 'houses'; })[0];
+          if (!hi || hi.data.decision !== 'approve') return { ok: false, error: 'not_shortlisted' };
+          hi.data.stage = body.stage; if (body.viewingAt) hi.data.viewingAt = body.viewingAt;
+          hi.data.stages = (hi.data.stages || []).concat([{ s: body.stage, at: new Date().toISOString() }]);
+          return { ok: true, stage: body.stage };
+        }
         if (body.type === 'vent') {
           store.vents = store.vents || [];
           if (body.op === 'add') { var vid = 'vt' + Date.now(); store.vents.push({ id: vid, person: p, day: dayKey(0), text: body.text, created: new Date().toISOString() }); return { ok: true, id: vid }; }
@@ -246,12 +259,16 @@
         if (body.action === 'read' || body.action === 'unread') { item.status = body.action === 'read' ? 'read' : 'open'; return { ok: true, status: item.status }; }
         var actId = 'a' + Date.now();
         item.status = 'queued';
-        if (item.module === 'houses') item.data.decision = body.action;
+        if (item.module === 'houses') {
+          if (body.action === 'restore') { delete item.data.decision; delete item.data.stage; item.status = 'open'; return { ok: true, status: 'open' }; }
+          item.data.decision = body.action === 'approve' ? 'approve' : 'reject';
+          if (body.action === 'approve') { item.data.stage = 'shortlisted'; item.data.stages = [{ s: 'shortlisted', at: new Date().toISOString() }]; }
+        }
         if (String(body.action).indexOf('option:') === 0) item.data.choice = body.action.slice(7);
         store.queue.push({ id: actId, ts: new Date().toISOString(), itemId: item.id, text: body.label || body.action });
         setTimeout(function () {
           item.status = 'done';
-          item.outcome = item.module === 'houses' ? (body.action === 'approve' ? 'Added to the tracker' : body.action === 'never' ? 'Blocked for good' : 'Hidden from digests') : 'Done by your EA';
+          item.outcome = item.module === 'houses' ? (body.action === 'approve' ? 'Added to the tracker' : 'Rejected') : 'Done by your EA';
           store.queue = store.queue.filter(function (q) { return q.id !== actId; });
           listeners.forEach(function (f) { f(); });
         }, 12000);
