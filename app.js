@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.6.1';
+  var VERSION = '1.7.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -173,6 +173,7 @@
   }
   function localInputValue(dt) { return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes()); }
   function endOfToday() { var e = new Date(); e.setHours(23, 59, 59, 0); return e; }
+  function clip(t, n) { t = String(t || '').replace(/\s+/g, ' ').trim(); if (t.length <= n) return t; var c = t.slice(0, n + 1), sp = c.lastIndexOf(' '); return (sp > n * 0.6 ? c.slice(0, sp) : t.slice(0, n)).replace(/[\s,.;:\u2014-]+$/, '') + '\u2026'; }
   function greeting() { var h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
   function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }
 
@@ -270,13 +271,14 @@
   };
 
   function accept(res, startedAt) {
-    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude } : null;
+    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin } : null;
     S.data = {
       items: (res.items || []).filter(function (i) { return canSee(i.for); }).map(function (i) { i.data = i.data || {}; return i; }),
       history: (res.history || []).filter(function (h) { return canSee(h.for); }),
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
-      doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true }
+      doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
+      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null
     };
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
     (S.localNotes || []).forEach(function (n) { if (!S.data.notes.some(function (x) { return x.id === n.id; })) S.data.notes.push(n); });
@@ -485,7 +487,8 @@
     if (/^(help|what can you do|how do i use (this|you)|commands)\b/.test(lo)) { agSay(raw, agHelp()); return true; }
 
     // shopping list
-    m = t.match(/^(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?$/i) || t.match(/^(?:we need|we're out of|we are out of|buy|get)\s+(?:some\s+|more\s+)?(.+?)(?:\s+from the shop(?:s)?)?$/i);
+    m = t.match(/^(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?$/i) || t.match(/^(?:we need|we're out of|we are out of|buy|get)\s+(?:some\s+|more\s+)?(.+?)(?:\s+from the shop(?:s)?)?$/i) ||
+      (!agWhen(t) && !/\b(to|on|about|that|for|my|our|list|calendar|jot|note|glass)\b/i.test(t.replace(/^add\s+/i, '')) && t.match(/^add\s+((?:some\s+|more\s+)?[a-z\u00c0-\u024f'-]+(?:\s+[a-z\u00c0-\u024f'-]+){0,2}(?:\s*(?:,|and|&)\s*[a-z\u00c0-\u024f'-]+(?:\s+[a-z\u00c0-\u024f'-]+){0,2})*)$/i));
     if (m && !/\b(calendar|remind)\b/i.test(t)) {
       var gl = m[1].split(/\s*(?:,|\band\b|&)\s*/).map(function (x) { return x.trim(); }).filter(Boolean);
       gl.forEach(function (g) { addGrocery(g); });
@@ -515,7 +518,7 @@
     if (m) {
       var hits = agMatch(m[1]);
       if (hits.length === 1) { noteOp(hits[0].id, 'done'); agSay(raw, 'Ticked off: “' + hits[0].text + '”. Nice one.', [{ label: 'Undo', type: 'undo', id: hits[0].id }]); }
-      else if (hits.length > 1) agSay(raw, 'Which one?', hits.slice(0, 4).map(function (x) { return { label: x.text.slice(0, 40), type: 'done', id: x.id }; }));
+      else if (hits.length > 1) agSay(raw, 'Which one?', hits.slice(0, 4).map(function (x) { return { label: clip(x.text, 40), type: 'done', id: x.id }; }));
       else agSay(raw, 'I couldn’t find that on your list. Your open jots are on Lists › My list.', [{ label: 'Open my list', type: 'tab', v: 'lists' }]);
       return true;
     }
@@ -527,7 +530,7 @@
       var q = agStripWhen(m[1].replace(/\s+(?:to|until|till|for)\s*$/i, '').replace(/\s+(?:to|until|till)\s+(?=\S)/i, ' '));
       var mv = agMatch(q);
       if (!mv.length) { agSay(raw, 'I couldn’t find “' + q + '” on your list.'); return true; }
-      if (mv.length > 1) { agSay(raw, 'Which one?', mv.slice(0, 4).map(function (x) { return at ? { label: x.text.slice(0, 40), type: 'settime', id: x.id, at: at } : { label: x.text.slice(0, 40), type: 'movepick', id: x.id }; })); return true; }
+      if (mv.length > 1) { agSay(raw, 'Which one?', mv.slice(0, 4).map(function (x) { return at ? { label: clip(x.text, 40), type: 'settime', id: x.id, at: at } : { label: clip(x.text, 40), type: 'movepick', id: x.id }; })); return true; }
       n = mv[0];
       if (!at) { agSay(raw, 'When should “' + n.text + '” come back?', agQuickTimes('settime', { id: n.id })); return true; }
       agSetTime(n, at); agSay(raw, 'Moved “' + n.text + '” to ' + whenLabel(at) + '.');
@@ -579,6 +582,7 @@
     var list = [];
     openNotes().forEach(function (n) { var t = Date.parse(n.remindAt); if (t >= a && t < b) list.push([t, n.text + (n.shared ? ' (both)' : '')]); });
     items('plan').forEach(function (i) { var t = Date.parse(i.due); if (i.status === 'open' && t >= a && t < b) list.push([t, i.title]); });
+    calEvents().forEach(function (e) { var t = Date.parse(e.start); if (t >= a && t < b) list.push([t, e.title + ' (calendar' + (e.allDay ? ', all day' : '') + ')']); });
     list.sort(function (x, y) { return x[0] - y[0]; });
     if (!list.length) return 'Nothing timed ' + span + '.';
     return agCap(span) + ':\n' + list.slice(0, 8).map(function (x) { return '• ' + whenLabel(new Date(x[0]).toISOString()) + ' — ' + x[1]; }).join('\n') + (list.length > 8 ? '\n…and ' + (list.length - 8) + ' more.' : '');
@@ -771,7 +775,7 @@
     S.gChangedAt = Date.now();
     var n = noteById(id); if (!n) return;
     var before = JSON.stringify(n);
-    if (op === 'done') { n.status = 'done'; n.doneAt = new Date().toISOString(); S.data.doneToday = (S.data.doneToday || 0) + 1; toast('Nice one. Done.'); }
+    if (op === 'done') { n.status = 'done'; n.doneAt = new Date().toISOString(); S.data.doneToday = (S.data.doneToday || 0) + 1; toast('Nice one. Done.', { btn: { act: 'addwin', id: n.id, label: 'Add to wins' }, ms: 5000 }); }
     if (op === 'undo') { n.status = 'open'; S.data.doneToday = Math.max(0, (S.data.doneToday || 0) - 1); }
     if (op === 'delete') S.data.notes = S.data.notes.filter(function (x) { return x !== n; });
     render();
@@ -864,7 +868,7 @@
       out.push({ id: i.id, owner: i.for, rank: i.module === 'migration' ? 1 : 3, title: i.title, sub: i.data.why || i.summary || '', go: i.module === 'migration' ? 'intel:mig' : 'intel:mine' });
     });
     var unread = S.data.messages.filter(function (m) { return m.from === 'ea' && m.ts > (S.chatSeen || ''); });
-    if (unread.length) out.push({ owner: S.person, rank: 0, title: 'New reply from your EA', sub: unread[unread.length - 1].text.slice(0, 70), go: 'ask' });
+    if (unread.length) out.push({ owner: S.person, rank: 0, title: 'New reply from your EA', sub: clip(unread[unread.length - 1].text, 90), go: 'ask' });
     return out.sort(function (a, b) { return a.rank - b.rank || String(a.due || '').localeCompare(String(b.due || '')); });
   }
 
@@ -884,7 +888,10 @@
     var endNext = new Date(endThis.getTime() + 7 * 86400000);
     var endAfter = new Date(endNext.getTime() + 7 * 86400000);
     var groups = [['Overdue', []], ['This week', []], ['Next week', []], ['Week after', []], ['Later', []]];
-    items('plan').filter(function (i) { return okWho(i.for); }).sort(function (a, b) { return String(a.due).localeCompare(String(b.due)); }).forEach(function (i) {
+    var cal = okWho('both') ? calEvents().filter(function (e) { return Date.parse(e.end || e.start) >= Date.now(); }).map(function (e) { return { cal: true, id: e.id, title: e.title, due: e.start, end: e.end, allDay: e.allDay, location: e.location, for: 'both' }; }) : [];
+    var jots = openNotes().filter(function (n) { var t = Date.parse(n.remindAt); return t > endOfToday().getTime() && okWho(n.shared ? 'both' : S.person); })
+      .map(function (n) { return { jot: true, id: n.id, title: n.text, due: n.remindAt, for: n.shared ? 'both' : S.person, n: n }; });
+    items('plan').filter(function (i) { return okWho(i.for); }).concat(cal, jots).sort(function (a, b) { return String(new Date(a.due).toISOString()).localeCompare(String(new Date(b.due).toISOString())); }).forEach(function (i) {
       var t = d(i.due);
       var g = !t ? 4 : t < today ? 0 : t < endThis ? 1 : t < endNext ? 2 : t < endAfter ? 3 : 4;
       groups[g][1].push(i);
@@ -955,6 +962,212 @@
     var n = unreadCount();
     return '<button class="askbar" data-act="openask">' + svg(I.chat, 20) + '<span class="ph">' + (n ? 'Your EA replied \u00b7 tap to read' : 'Ask your EA anything\u2026') + '</span>' + (n ? '<span class="hdot static" aria-label="New reply"></span>' : '<span class="hint">Instant answers</span>') + '</button>';
   }
+  /* ───────── Grow: tiny habits, keeping in touch, kindness, weekly check-in, wins, wind-down ─────────
+     Habits, people and kindness are private to you. Wins are shared with both of you.
+     Check-in answers stay hidden until you've both answered. No extra alerts. */
+  function kv(k, dflt) { var v = (S.data.kv || {})[k]; return v === undefined || v === null ? dflt : v; }
+  function kvSave(k, v) {
+    S.gChangedAt = Date.now();
+    S.data.kv = Object.assign({}, S.data.kv || {}); S.data.kv[k] = v;
+    return api.post({ type: 'kv', name: k, value: v }).then(function (r) { if (!r || !r.ok) throw new Error(); return r; })
+      .catch(function () { toast('Couldn’t save that. Try again.'); return null; });
+  }
+  function dayKeyOf(t) { var n = new Date(t); return n.getFullYear() + '-' + pad(n.getMonth() + 1) + '-' + pad(n.getDate()); }
+  function daysBetween(a, b) { return Math.round((dayStart(new Date(b + 'T12:00:00')) - dayStart(new Date(a + 'T12:00:00'))) / 86400000); }
+  function gid() { return Math.random().toString(36).slice(2, 9); }
+
+  // ── tiny habits
+  var HABIT_IDEAS = ['Walk for 10 minutes', 'Pray or read scripture', 'Stretch for 5 minutes', 'Read 10 pages', 'Phone out of the bedroom', 'Eat one piece of fruit', 'Tidy one small space', 'Write one line in a journal'];
+  function habits() { var h = kv('habits', {}); return { list: (h.list || []).slice(0, 3), log: h.log || {} }; }
+  function habitDone(h, id, day) { return (h.log[day || todayKey()] || []).indexOf(id) > -1; }
+  function habitRun(h, id) {
+    // Consecutive days, with one rest day a week allowed. Today counts once it's done.
+    var run = 0, rest = -99, t = Date.now();
+    if (!habitDone(h, id)) t -= 86400000;
+    for (var i = 0; i < 400; i++) {
+      var k = dayKeyOf(t - i * 86400000);
+      if (habitDone(h, id, k)) run++;
+      else if (i - rest >= 7 && run > 0 && habitDone(h, id, dayKeyOf(t - (i + 1) * 86400000))) rest = i;
+      else break;
+    }
+    return run;
+  }
+  function habitToggle(id) {
+    var h = habits(), k = todayKey(), day = (h.log[k] || []).slice(), i = day.indexOf(id);
+    if (i > -1) day.splice(i, 1); else day.push(id);
+    var log = {}; Object.keys(h.log).sort().slice(-120).forEach(function (x) { log[x] = h.log[x]; }); log[k] = day;
+    var all = h.list.length && h.list.every(function (x) { return day.indexOf(x.id) > -1; });
+    kvSave('habits', { list: h.list, log: log }); render();
+    if (i < 0) toast(all ? 'All your habits done today. Lovely.' : 'Ticked. Small steps count.');
+  }
+  function habitsCard() {
+    var h = habits();
+    if (!h.list.length) {
+      return '<section class="card pad stack grow" aria-label="Tiny habits"><div class="row-between"><span class="h2 growh">' + svg(I.leaf, 13) + ' Tiny habits</span></div>' +
+        '<p class="ctext soft">Pick one or two small things to do most days. Rest days are fine.</p><div class="chips wrap">' +
+        HABIT_IDEAS.slice(0, 3).map(function (x) { return '<button class="fchip" data-act="habitadd" data-v="' + esc(x) + '">' + svg(I.plus, 13) + esc(x) + '</button>'; }).join('') +
+        '</div><button class="textbtn" data-act="growsheet">Choose your own</button></section>';
+    }
+    return '<section class="card pad stack grow" aria-label="Tiny habits"><div class="row-between"><span class="h2 growh">' + svg(I.leaf, 13) + ' Tiny habits</span><button class="textbtn" data-act="growsheet">Edit</button></div>' +
+      '<ul class="hablist">' + h.list.map(function (x) {
+        var on = habitDone(h, x.id), run = habitRun(h, x.id);
+        return '<li><button class="habit" data-act="habit" data-id="' + esc(x.id) + '" aria-pressed="' + on + '"><span class="box">' + (on ? svg(I.check, 16) : '') + '</span><span class="t">' + esc(x.name) + '</span><span class="s">' + (run ? run + '-day run' : 'Start today') + '</span></button></li>';
+      }).join('') + '</ul></section>';
+  }
+
+  // ── keeping in touch
+  function rota() { var r = kv('rota', {}); return { list: r.list || [], skip: r.skip || '' }; }
+  function dueContact() {
+    var r = rota(); if (r.skip === todayKey()) return null;
+    var best = null;
+    r.list.forEach(function (c) {
+      var gap = c.last ? daysBetween(c.last, todayKey()) : 999, over = gap - (+c.every || 14);
+      if (over >= 0 && (!best || over > best.over)) best = { c: c, gap: gap, over: over };
+    });
+    return best;
+  }
+  function gapWords(n) { return n >= 999 ? 'a while' : n >= 14 ? Math.round(n / 7) + ' weeks' : n === 7 ? 'a week' : n + ' days'; }
+
+  // ── kindness
+  var KINDNESS = [
+    'Send {o} a message about one thing you love about them.', 'Make {o} a drink without being asked.', 'Ask {o}: what was the best bit of your day? Then just listen.',
+    'Text a brother, sister or cousin just to say you’re thinking of them.', 'Thank someone at work for something specific.', 'Ring a parent or older relative for five minutes.',
+    'Leave {o} a short note to find later.', 'Do one job {o} usually does.', 'Pray for, or think kindly of, one person by name.',
+    'Send a friend a photo or memory you share.', 'Give someone ten minutes of full attention, phone away.', 'Say sorry for something small, or let one thing go.',
+    'Praise someone’s effort, not just the result.', 'Ask an older relative for a story from their life.', 'Check in on a friend who has gone quiet.',
+    'Give {o} a long hug, twenty seconds or more.', 'Plan a small treat for the two of you this week.', 'Tell {o} one way you’ve seen them grow this year.',
+    'Help a neighbour or a stranger in a small way.', 'Share a verse, quote or song that lifted you with someone who needs it.', 'Ask {o} how you can help this week.'
+  ];
+  function kindToday() {
+    var k = kv('kind', {}), base = Math.floor(dayStart(new Date()).getTime() / 86400000) + (S.person === 'itunu' ? 7 : 0) + (+k.shift || 0);
+    return KINDNESS[((base % KINDNESS.length) + KINDNESS.length) % KINDNESS.length].replace(/\{o\}/g, otherName());
+  }
+  function connectCard() {
+    var k = kv('kind', {}), done = k.done === todayKey(), due = dueContact();
+    var h = '<section class="card pad stack connect" aria-label="Connect"><div class="row-between"><span class="h2 conh">' + svg(I.heart, 13) + ' Connect</span><button class="textbtn" data-act="growsheet" aria-label="People to keep in touch with">People</button></div>';
+    h += done ? '<p class="ctext soft">' + svg(I.check, 15) + ' Kindness done today. Thank you.</p>'
+      : '<p class="ctext">' + esc(kindToday()) + '</p><div class="calmbtns"><button class="btn small olive" data-act="kinddone">' + svg(I.check, 15) + 'Done</button><button class="textbtn" data-act="kindnew" aria-label="Another idea">' + svg(I.shuffle, 18) + '</button></div>';
+    if (due) h += '<div class="callrow"><span>It’s been ' + esc(gapWords(due.gap)) + ' since you spoke to <b>' + esc(due.c.name) + '</b>.</span><div class="calmbtns"><button class="btn small" data-act="called" data-id="' + esc(due.c.id) + '">Spoke to them</button><button class="textbtn" data-act="callskip">Not today</button></div></div>';
+    else if (!rota().list.length) h += '<button class="textbtn" data-act="growsheet">' + svg(I.plus, 14) + 'Add people to keep in touch with</button>';
+    return h + '</section>';
+  }
+
+  // ── weekly check-in (Sunday, and Monday if you haven't done it)
+  var CHECKIN_Q = ['A moment this week when you felt close to {o}?', 'Something {o} did that you appreciated?', 'One thing that would help you feel supported next week?'];
+  function checkinWeek() { var n = new Date(); n.setDate(n.getDate() - n.getDay()); return dayKeyOf(n); } // the most recent Sunday
+  function checkinCard() {
+    var dow = new Date().getDay(), c = S.data.checkin || {}, wk = checkinWeek(), mine = c.week === wk ? c.mine : null, theirs = c.week === wk ? c.theirs : null;
+    var seen = LS.get('fea.ciSeen', '') === wk;
+    if (seen || !(dow === 0 || dow === 1 && (!mine || theirs))) return '';
+    var o = otherName(), q = CHECKIN_Q.map(function (x) { return x.replace(/\{o\}/g, o); });
+    var h = '<section class="card pad stack checkin" aria-label="Weekly check-in"><span class="h2 cih">' + svg(I.heart, 13) + ' Weekly check-in</span>';
+    if (!mine) {
+      h += '<p class="note">Three short answers. ' + esc(o) + ' only sees yours once you’ve both answered.</p><form id="ci-form" class="stack" style="gap:10px" autocomplete="off">' +
+        q.map(function (x, i) { return '<label class="field"><span class="ciq">' + esc(x) + '</span><input id="ci-' + i + '" maxlength="300" enterkeyhint="' + (i < 2 ? 'next' : 'done') + '"></label>'; }).join('') +
+        '<button class="btn olive" type="submit">' + svg(I.check, 16) + 'Save my answers</button></form>';
+    } else if (!theirs) {
+      h += '<p class="ctext soft">' + svg(I.check, 15) + ' Saved. You’ll see each other’s answers once ' + esc(o) + ' has answered too.</p>';
+    } else {
+      h += q.map(function (x, i) { return '<div class="cia"><span class="ciq">' + esc(x) + '</span><span><b>You:</b> ' + esc(mine[i] || '–') + '</span><span><b>' + esc(o) + ':</b> ' + esc(theirs[i] || '–') + '</span></div>'; }).join('') +
+        '<p class="note">Take five minutes to talk about one of these together.</p><button class="textbtn" data-act="ciseen">Done for this week</button>';
+    }
+    return h + '</section>';
+  }
+  function saveCheckin() {
+    var a = [0, 1, 2].map(function (i) { var el = document.getElementById('ci-' + i); return el ? el.value.trim().slice(0, 300) : ''; });
+    if (!a.some(Boolean)) { toast('Write at least one answer.'); return; }
+    var wk = checkinWeek();
+    S.data.checkin = { week: wk, mine: a, theirs: null };
+    render();
+    kvSave('checkin_' + wk, { a: a }).then(function (r) { if (r && r.theirs) { S.data.checkin.theirs = r.theirs; render(); } });
+    toast('Saved. Thank you.');
+  }
+
+  // ── wins (shared with both of you)
+  function weekStart() { var n = dayStart(new Date()); n.setDate(n.getDate() - ((n.getDay() + 6) % 7)); return n; }
+  function winsThisWeek() { var a = dayKeyOf(weekStart()); return (S.data.wins || []).filter(function (w) { return w.day >= a; }).sort(function (x, y) { return x.day < y.day ? 1 : -1; }); }
+  function addWin(text) {
+    text = String(text || '').trim().slice(0, 200); if (!text) return;
+    var mine = (kv('wins', []) || []).slice(-59), w = { id: 'w' + gid(), text: text, day: todayKey() };
+    mine.push(w); S.data.wins = (S.data.wins || []).concat([{ id: w.id, text: text, day: w.day, from: '' }]);
+    kvSave('wins', mine); render(); toast('Added to your wins. ' + otherName() + ' will see it too.');
+  }
+  function winsCard() {
+    var list = winsThisWeek(), d = new Date(), recap = (d.getDay() === 5 && d.getHours() >= 17) || d.getDay() === 6 || d.getDay() === 0;
+    var h = '<section class="card pad stack wins" aria-label="Wins this week"><div class="row-between"><span class="h2 winh">' + svg(I.spark, 13) + (recap ? ' This week’s wins' : ' Wins this week') + ' · ' + list.length + '</span><span class="note" style="font-size:.75rem">Shared with ' + esc(otherName()) + '</span></div>';
+    if (recap && list.length) h += '<p class="note">Look what you did this week. Which one are you proudest of?</p>';
+    var show = recap || S.winsOpen ? list : list.slice(0, 2);
+    if (show.length) h += '<ul class="winlist">' + show.map(function (w) { return '<li><span>' + esc(w.text) + '</span><span class="frombadge">' + (w.from ? esc(PEOPLE[w.from] || w.from) : 'You') + '</span></li>'; }).join('') + '</ul>';
+    if (!recap && list.length > 2 && !S.winsOpen) h += '<button class="textbtn" data-act="winsmore">Show all ' + list.length + '</button>';
+    h += '<form class="addrow" id="win-form" autocomplete="off"><label class="sr" for="win-input">Add a win</label><input id="win-input" maxlength="200" enterkeyhint="done" placeholder="A win, big or small"><button class="send" type="submit" aria-label="Add the win">' + svg(I.plus, 20) + '</button></form>';
+    return h + '</section>';
+  }
+
+  // ── wind-down from 9:30pm
+  function windDownCard() {
+    var d = new Date(), m = d.getHours() * 60 + d.getMinutes();
+    if (m < 21 * 60 + 30 && m > 4 * 60) return '';
+    if (LS.get('fea.windDown', '') === todayKey()) return '<section class="card pad stack wind" aria-label="Wind-down"><p class="ctext soft">' + svg(I.moon, 15) + ' Phone away. Goodnight, ' + esc(S.name) + '.</p></section>';
+    var tf = tomorrowFirst();
+    return '<section class="card pad stack wind" aria-label="Wind-down"><span class="h2 windh">' + svg(I.moon, 13) + ' Wind-down</span>' +
+      '<p class="ctext">' + (tf ? 'Tomorrow starts with <b>' + esc(tf.text) + '</b> at ' + esc(hhmm(new Date(tf.at).toISOString())) + '. It’s noted, so you can let it go for tonight.' : 'Nothing early tomorrow. You can let today go.') + '</p>' +
+      '<div class="calmbtns"><button class="btn small olive" data-act="breathe">' + svg(I.wind, 16) + 'Breathe · 1 min</button><button class="btn small" data-act="phoneaway">' + svg(I.moon, 15) + 'Phone away</button></div></section>';
+  }
+
+  // ── set-up sheet
+  function growSheet() {
+    var h = habits(), r = rota(), every = [[7, 'Weekly'], [14, '2 weeks'], [21, '3 weeks'], [28, 'Monthly']];
+    return sheetWrap('Habits and people', '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">Habits and people</h2><button class="textbtn" data-act="closesheet">Done</button></div>' +
+      '<p class="note">Only you see these.</p>' +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Tiny habits · up to 3</span>' +
+      (h.list.length ? '<ul class="grlist">' + h.list.map(function (x) { return '<li class="grrow"><span class="t">' + esc(x.name) + '</span><button class="fx" data-act="habitdel" data-id="' + esc(x.id) + '" aria-label="Remove ' + esc(x.name) + '">' + svg(I.x, 16) + '</button></li>'; }).join('') + '</ul>' : '') +
+      (h.list.length < 3 ? '<form class="addrow" id="habit-form" autocomplete="off"><label class="sr" for="habit-input">New habit</label><input id="habit-input" maxlength="60" placeholder="e.g. Walk for 10 minutes"><button class="send" type="submit" aria-label="Add habit">' + svg(I.plus, 20) + '</button></form>' +
+        '<div class="chips wrap">' + HABIT_IDEAS.filter(function (x) { return !h.list.some(function (y) { return y.name === x; }); }).map(function (x) { return '<button class="fchip" data-act="habitadd" data-v="' + esc(x) + '">' + esc(x) + '</button>'; }).join('') + '</div>' : '') + '</div>' +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Keep in touch</span><p class="note" style="margin:0">Parents, brothers and sisters, friends. You’ll get a gentle line on Today when it’s been a while.</p>' +
+      (r.list.length ? '<ul class="grlist">' + r.list.map(function (c) {
+        return '<li class="grrow"><span class="t">' + esc(c.name) + '</span><span class="chips">' + every.map(function (e) { return '<button class="evbtn' + (+c.every === e[0] ? ' on' : '') + '" data-act="rotaevery" data-id="' + esc(c.id) + '" data-v="' + e[0] + '" aria-pressed="' + (+c.every === e[0]) + '">' + e[1] + '</button>'; }).join('') + '</span>' +
+          '<button class="fx" data-act="rotadel" data-id="' + esc(c.id) + '" aria-label="Remove ' + esc(c.name) + '">' + svg(I.x, 16) + '</button></li>';
+      }).join('') + '</ul>' : '') +
+      '<form class="addrow" id="rota-form" autocomplete="off"><label class="sr" for="rota-input">Name</label><input id="rota-input" maxlength="40" placeholder="e.g. Mum, Tolu, Sam"><button class="send" type="submit" aria-label="Add person">' + svg(I.plus, 20) + '</button></form></div>');
+  }
+  function addHabit(name) {
+    name = String(name || '').trim().slice(0, 60); var h = habits();
+    if (!name) return; if (h.list.length >= 3) { toast('Three is plenty. Remove one first.'); return; }
+    if (h.list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase(); })) return;
+    h.list.push({ id: 'h' + gid(), name: name }); kvSave('habits', h); render(); renderOverlay();
+  }
+  function rotaPatch(fn) { var r = rota(); fn(r); kvSave('rota', r); render(); renderOverlay(); }
+  function growClick(act, id, v) {
+    switch (act) {
+      case 'habit': habitToggle(id); return true;
+      case 'habitadd': addHabit(v); toast('Added: ' + v); return true;
+      case 'habitdel': var h = habits(); h.list = h.list.filter(function (x) { return x.id !== id; }); kvSave('habits', h); render(); renderOverlay(); return true;
+      case 'growsheet': openSheet('grow'); return true;
+      case 'rotaevery': rotaPatch(function (r) { r.list.forEach(function (c) { if (c.id === id) c.every = +v; }); }); return true;
+      case 'rotadel': rotaPatch(function (r) { r.list = r.list.filter(function (c) { return c.id !== id; }); }); return true;
+      case 'called': rotaPatch(function (r) { r.list.forEach(function (c) { if (c.id === id) c.last = todayKey(); }); }); toast('Lovely. Noted.'); return true;
+      case 'callskip': rotaPatch(function (r) { r.skip = todayKey(); }); return true;
+      case 'kinddone': var k = Object.assign({}, kv('kind', {})); k.done = todayKey(); kvSave('kind', k); render(); toast('Thank you. Kindness counts.'); return true;
+      case 'kindnew': var k2 = Object.assign({}, kv('kind', {})); k2.shift = (+k2.shift || 0) + 1; kvSave('kind', k2); render(); return true;
+      case 'ciseen': LS.set('fea.ciSeen', checkinWeek()); render(); return true;
+      case 'winsmore': S.winsOpen = true; render(); return true;
+      case 'addwin': var n = noteById(id); if (n) addWin(n.text); return true;
+      case 'phoneaway': LS.set('fea.windDown', todayKey()); render(); toast('Goodnight. Everything is noted for tomorrow.'); return true;
+    }
+    return false;
+  }
+  function growSubmit(id) {
+    if (id === 'habit-form') { var hi = document.getElementById('habit-input'); addHabit(hi && hi.value); return true; }
+    if (id === 'rota-form') {
+      var ri = document.getElementById('rota-input'), nm = ri ? ri.value.trim().slice(0, 40) : '';
+      if (nm) rotaPatch(function (r) { r.list.push({ id: 'c' + gid(), name: nm, every: 14, last: todayKey() }); });
+      return true;
+    }
+    if (id === 'win-form') { var wi = document.getElementById('win-input'); addWin(wi && wi.value); return true; }
+    if (id === 'ci-form') { saveCheckin(); return true; }
+    return false;
+  }
+
   function today() {
     var all = needs();
     var jots = openNotes().map(function (n) { return { owner: n.shared ? 'both' : S.person, title: n.text, sub: n.remindAt ? whenLabel(n.remindAt) : 'No time set', go: 'lists', jot: true }; });
@@ -962,14 +1175,14 @@
     var tiles = [S.person, 'both', 'either'].map(function (o) {
       var w = owner(o), n = counted.filter(function (x) { return x.owner === o; }).length;
       var sub = o === S.person ? 'Just for you' : o === 'both' ? 'Needs you together' : 'Whoever’s free';
-      return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '" aria-label="' + n + ' for ' + esc(w.label) + '"><span class="n">' + n + '</span><span class="l">' + esc(o === S.person ? S.name : o === 'both' ? 'Both' : 'Either') + '</span><span class="s">' + sub + '</span></button>';
+      return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '" aria-label="' + n + ' for ' + esc(w.label) + '"><span class="n">' + n + '</span><span class="l">' + (o === S.person ? 'for you' : o === 'both' ? 'together' : 'either') + '</span><span class="s">' + sub + '</span></button>';
     }).join('');
     var list = (S.who === 'all' ? all : counted).filter(function (x) { return okWho(x.owner); });
     var html = [askBar()];
     // Who needs to act: right at the top, and tapping a tile shows its list straight underneath.
     html.push('<section class="tiles compact" aria-label="Who needs to act">' + tiles + '</section>');
     // A pause before the to-dos: calm and gratitude are always in view when the app opens.
-    html.push(calmCard());
+    html.push(windDownCard() || calmCard());
     html.push(gratitudeCard());
     function whoList(items) {
       return '<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + items.length + '</h2>' +
@@ -989,6 +1202,10 @@
     // "Your day": what's next, then the rest of today by morning, afternoon and evening.
     var day = yourDay(all);
     html.push(day.html);
+    var ci = checkinCard(); if (ci) html.push(ci);
+    html.push(habitsCard());
+    html.push(connectCard());
+    html.push(winsCard());
     var qc = quoteCard(); if (qc) html.push(qc);
     html.push(waterCard());
     if (S.who === 'all') html.push(whoList(list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; })));
@@ -1018,6 +1235,8 @@
   var SLOTS = [['morning', 'Morning', 'sun'], ['afternoon', 'Afternoon', 'sun'], ['evening', 'Evening', 'moon'], ['anytime', 'Anytime', 'leaf']];
   function slotRank(k) { for (var i = 0; i < SLOTS.length; i++) if (SLOTS[i][0] === k) return i; return 3; }
   // Everything for today, placed in the part of the day it belongs to. Untimed jots get a suggested slot.
+  function calEvents() { return (S.data.events || []).filter(function (e) { return e && e.start; }); }
+  function evWhen(e) { return e.allDay ? 'All day' : hhmm(e.start) + (e.end ? '\u2013' + hhmm(e.end) : ''); }
   function dayEntries() {
     var now = Date.now(), end = endOfToday().getTime(), start = dayStart(new Date()).getTime(), cur = slotOf(now), out = [];
     openNotes().forEach(function (n) {
@@ -1028,6 +1247,11 @@
     items('plan').filter(function (i) { return i.status === 'open' && !S.pending[i.id] && !isSnoozed(i.id) && i.due; }).forEach(function (i) {
       var t = Date.parse(i.due); if (isNaN(t) || t < start || t > end) return;
       out.push({ kind: 'item', id: i.id, text: (i.data.kind === 'clash' ? 'Clash: ' : '') + i.title, sub: i.summary || '', at: t, slot: slotOf(t), late: t < now - 5 * 60000, level: i.data.kind === 'clash' ? 'important' : 'normal', go: 'plan' });
+    });
+    calEvents().forEach(function (e) {
+      var t = Date.parse(e.start), te = Date.parse(e.end) || t; if (isNaN(t) || t > end || te < start || te < now) return;
+      if (e.allDay) out.push({ kind: 'cal', id: e.id, text: e.title, sub: 'All day \u00b7 Family calendar', at: null, slot: 'anytime', go: 'plan' });
+      else out.push({ kind: 'cal', id: e.id, text: e.title, sub: (e.location ? e.location + ' \u00b7 ' : '') + 'Family calendar', at: Math.max(t, start), slot: slotOf(Math.max(t, start)), late: false, go: 'plan' });
     });
     var loose = openNotes().filter(function (n) { return !n.remindAt; }), shownLoose = 0;
     loose.forEach(function (n) {
@@ -1043,9 +1267,11 @@
     var a = dayStart(new Date()).getTime() + 86400000, b = a + 86400000, best = null;
     openNotes().forEach(function (n) { var t = Date.parse(n.remindAt); if (t >= a && t < b && (!best || t < best.at)) best = { at: t, text: n.text }; });
     items('plan').forEach(function (i) { var t = Date.parse(i.due); if (i.status === 'open' && t >= a && t < b && (!best || t < best.at)) best = { at: t, text: i.title }; });
+    calEvents().forEach(function (e) { var t = Date.parse(e.start); if (!e.allDay && t >= a && t < b && (!best || t < best.at)) best = { at: t, text: e.title }; });
     return best;
   }
   function dayRowBtns(e) {
+    if (e.kind === 'cal') return '';
     if (e.kind === 'note') return '<button class="btn small" data-act="snoozenote" data-id="' + esc(e.id) + '">Later</button>';
     return e.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(e.id) + '">Later</button>' : '';
   }
@@ -1085,8 +1311,8 @@
     }
     var rest = entries.filter(function (e) { return e !== next && !e.late; }), missed = entries.filter(function (e) { return e !== next && e.late; });
     function row(e, quiet) {
-      var sub = e.at === null ? (e.suggested ? 'Suggested · ' + e.suggested : 'No time set') : e.late ? 'Was due ' + (e.earlier ? whenLabel(new Date(e.at).toISOString()) : hhmm(new Date(e.at).toISOString())) : hhmm(new Date(e.at).toISOString()) + (e.sub ? ' · ' + e.sub : '');
-      var main = e.kind === 'note'
+      var sub = e.kind === 'cal' && e.at === null ? e.sub : e.at === null ? (e.suggested ? 'Suggested · ' + e.suggested : 'No time set') : e.late ? 'Was due ' + (e.earlier ? whenLabel(new Date(e.at).toISOString()) : hhmm(new Date(e.at).toISOString())) : hhmm(new Date(e.at).toISOString()) + (e.sub ? ' · ' + e.sub : '');
+      var main = e.kind === 'cal' ? '<span class="pdot cal" aria-hidden="true">' + svg(I.plan, 12) + '</span><button class="col linkcol" data-act="go" data-v="plan">' : e.kind === 'note'
         ? '<button class="gcheck" data-act="notedone" data-id="' + esc(e.id) + '" aria-label="Done: ' + esc(e.text) + '"><span class="box"></span></button><button class="col linkcol" data-act="editnote" data-id="' + esc(e.id) + '" aria-label="Edit: ' + esc(e.text) + '">'
         : '<span class="pdot" aria-hidden="true"></span><button class="col linkcol" data-act="go" data-v="' + esc(e.go) + '">';
       return '<li class="drow' + (quiet ? ' quiet' : '') + '">' + main + '<span class="t">' + esc(e.text) + levelMark(e.level) + (e.kind === 'note' ? jotTags(noteById(e.id)) : '') + '</span><span class="s">' + esc(sub) + '</span></button>' + dayRowBtns(e) + '</li>';
@@ -1302,14 +1528,15 @@
     var pr = gratPrompt();
     return '<div class="grprompt"><span>' + svg(I.spark, 14) + esc(pr) + '</span><button class="textbtn" data-act="grprompt" aria-label="Another prompt">' + svg(I.shuffle, 18) + '</button></div>' +
       '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">' + gratQuestion() + '</label>' +
-      '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="' + esc(gratQuestion().replace('What are you grateful for', 'Grateful for')) + '" value="' + esc(S.grText) + '">' +
+      '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="I\u2019m grateful for\u2026" value="' + esc(S.grText) + '">' +
       '<button type="button" class="grsh" data-act="grsharenew" aria-pressed="' + !!S.grShare + '" aria-label="' + (S.grShare ? 'Will share with ' + esc(otherName()) + '. Tap to keep it just for you' : 'Just for you. Tap to share with ' + esc(otherName())) + '">' + svg(I.heart, 18) + '</button>' +
       '<button class="send" type="submit" aria-label="Save">' + svg(I.check, 22) + '</button></form>' +
       '<span class="grshnote">' + (S.grShare ? 'Will share with ' + esc(otherName()) : 'Just for you · tap the heart to share') + '</span>';
   }
   function gratitudeCard() {
     var mine = (S.data.gratitude || []).filter(function (g) { return !g.from && g.day === todayKey(); });
-    return '<section class="card pad stack grat" aria-label="Gratitude"><span class="h2 grh">' + svg(I.heart, 13) + ' Gratitude</span>' +
+    var hr = new Date().getHours();
+    return '<section class="card pad stack grat" aria-label="Gratitude"><span class="h2 grh">' + svg(I.heart, 13) + ' Gratitude \u00b7 ' + (hr < 12 ? 'this morning' : hr < 17 ? 'so far today' : 'today') + '</span>' +
       '<b class="gq sr">' + gratQuestion() + '</b>' +
       (mine.length ? '<ul class="grlist">' + mine.map(grRow).join('') + '</ul>' + (S.grMore ? gratitudeForm() : '<button class="textbtn" data-act="grmore">Add another</button>') : gratitudeForm()) + '</section>';
   }
@@ -1363,11 +1590,18 @@
   }
 
   function plan() {
-    var html = [whoChips(), '<div class="note">The next three weeks, from your calendars and inbox.</div>'];
+    var html = [whoChips(), '<div class="note">The next three weeks: your EA\u2019s finds, the Family calendar and your timed jots.</div>'];
     var groups = planGroups();
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
       html.push('<section class="stack"><h2 class="h2">' + g[0] + '</h2>' + g[1].map(function (i) {
+        if (i.cal || i.jot) {
+          var tt = d(i.due);
+          return '<article class="card plan lite"><div class="date"><small>' + (tt ? DOW[tt.getDay()] : '\u2013') + '</small><b>' + (tt ? tt.getDate() : '') + '</b></div>' +
+            '<div class="grow"><div class="tags"><span class="tag ' + (i.cal ? 't-cal">' + svg(I.plan, 11) + ' Family calendar' : 't-jot">Your jot') + '</span>' + ochip(i.for) + (i.jot ? jotTags(i.n) : '') + '</div>' +
+            '<b>' + esc(i.title) + '</b><div class="note" style="font-size:.8125rem">' + esc(i.cal ? evWhen({ allDay: i.allDay, start: i.due, end: i.end }) + (i.location ? ' \u00b7 ' + i.location : '') : hhmm(i.due)) + '</div>' +
+            (i.jot ? '<div class="btns" style="justify-content:flex-start"><button class="btn small" style="flex:0 0 auto" data-act="editnote" data-id="' + esc(i.id) + '">' + svg(I.edit, 15) + 'Edit</button></div>' : '') + '</div></article>';
+        }
         var x = i.data || {}, kind = x.kind || 'event', t = d(i.due), clash = kind === 'clash' && i.status === 'open';
         var pending = S.pending[i.id];
         var body = '';
@@ -1379,7 +1613,7 @@
               return '<button class="btn ' + (k === 0 ? 'primary' : '') + '" style="justify-content:flex-start;text-align:left" data-act="planact" data-id="' + esc(i.id) + '" data-v="option:' + esc(o.id) + '" data-label="' + esc(o.label) + '">' + esc(o.label) + '</button>';
             }).join('');
           } else {
-            var acts = kind === 'deadline' ? [['add_calendar', 'Add to calendar'], ['remind', 'Remind me']] : [['add_calendar', 'Add to calendar']];
+            var acts = [['add_calendar', 'Add to calendar']];
             body = '<div class="btns" style="justify-content:flex-start">' + acts.map(function (a) { return '<button class="btn small" style="flex:0 0 auto" data-act="planact" data-id="' + esc(i.id) + '" data-v="' + a[0] + '" data-label="' + esc(a[1] + ': ' + i.title) + '">' + a[1] + '</button>'; }).join('') + '</div>';
           }
         } else if (i.status === 'queued') {
@@ -1424,7 +1658,7 @@
     var z = snoozeOf(i.id);
     return '<div class="cardtools"><button class="textbtn addfile" data-act="attachfor" data-id="' + esc(i.id) + '">' + svg(I.clip, 16) + 'Add a file</button>' +
       (z ? '<button class="textbtn addfile" data-act="unsnooze" data-id="' + esc(i.id) + '">' + svg(I.snooze, 16) + 'Snoozed to ' + esc(whenLabel(z.until)) + ' · undo</button>'
-        : (i.status === 'open' ? '<button class="textbtn addfile" data-act="snoozeitem" data-id="' + esc(i.id) + '">' + svg(I.snooze, 16) + 'Remind me later</button>' : '')) + '</div>';
+        : (i.status === 'open' ? '<button class="textbtn addfile" data-act="snoozeitem" data-id="' + esc(i.id) + '">' + svg(I.snooze, 16) + 'Remind me</button>' : '')) + '</div>';
   }
 
   /* ───────── Lists: shared groceries + my jots ───────── */
@@ -1494,7 +1728,8 @@
     whenOptions().forEach(function (o) { add(o[3], [o[0], o[1], whenLabel(o[2].toISOString()).replace(/^(Today|Tomorrow) /, '')]); });
     add('Later', ['pick', 'Pick a time', S.jotWhen === 'pick' && S.pickTime ? whenLabel(new Date(S.pickTime).toISOString()) : '']);
     if (withNone) add('Later', ['none', 'No time', 'Just keep it on my list']);
-    return (S.jotGuessed && !S.jotWhenSet ? '<span class="note guess">' + svg(I.spark, 13) + ' Picked from what you wrote. Tap to change.</span>' : '') +
+    var gw = S.jotGuessed && !S.jotWhenSet ? chosenWhen() : '';
+    return (S.jotGuessed && !S.jotWhenSet ? '<div class="guesschip" role="status">' + svg(I.spark, 14) + '<span><b>' + esc(gw ? whenLabel(gw) : 'Time picked') + '</b> \u00b7 picked from what you wrote. Tap another time to change it.</span></div>' : '') +
       order.map(function (g) {
         return '<div class="whengroup"><span class="wg">' + esc(g) + '</span><div class="whens" role="radiogroup" aria-label="' + esc(g) + '">' + groups[g].map(function (o) {
           return '<button class="opt when" role="radio" aria-checked="' + (S.jotWhen === o[0]) + '" data-act="when" data-v="' + o[0] + '"><b>' + esc(o[1]) + '</b>' + (o[2] ? '<span>' + esc(o[2]) + '</span>' : '') + '</button>';
@@ -1559,16 +1794,19 @@
         (!q || (h.title + ' ' + h.outcome + ' ' + (h.detail || '')).toLowerCase().indexOf(q) > -1);
     });
     var shown = base.filter(function (h) { return S.month === 'all' || monthKey(h.date) === S.month; });
-    var html = '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Month</span><div class="chips" role="group" aria-label="Month">' +
+    var nf = (S.month !== 'all' ? 1 : 0) + (S.mod !== 'all' ? 1 : 0) + (S.who !== 'all' ? 1 : 0);
+    var html = '<div class="row-between"><button class="fchip" data-act="histfilters" aria-expanded="' + !!S.histFilters + '" aria-pressed="' + !!nf + '">' + svg(I.filter || I.search, 15) + ' Filter' + (nf ? ' · ' + nf : '') + '</button>' +
+      (nf ? '<button class="textbtn" data-act="histclear">Clear</button>' : '') + '</div>';
+    if (S.histFilters) html += '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Month</span><div class="chips" role="group" aria-label="Month">' +
       [{ key: 'all', short: 'All', long: 'Last 6 months' }].concat(months).map(function (m) {
         var n = m.key === 'all' ? base.length : base.filter(function (h) { return monthKey(h.date) === m.key; }).length;
         return '<button class="mchip" data-act="month" data-v="' + m.key + '" aria-pressed="' + (S.month === m.key) + '"><b>' + m.short + '</b><span>' + n + '</span></button>';
       }).join('') + '</div></div>';
-    html += '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Area</span><div class="chips" role="group" aria-label="Area">' +
+    if (S.histFilters) html += '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Area</span><div class="chips" role="group" aria-label="Area">' +
       [['all', 'All areas']].concat(Object.keys(AREAS).map(function (k) { return [k, AREAS[k]]; })).map(function (a) {
         return '<button class="fchip" data-act="mod" data-v="' + a[0] + '" aria-pressed="' + (S.mod === a[0]) + '">' + a[1] + '</button>';
       }).join('') + '</div></div>';
-    html += whoChips();
+    if (S.histFilters) html += whoChips();
     var label = S.month === 'all' ? 'Last 6 months' : (months.filter(function (m) { return m.key === S.month; })[0] || {}).long;
     html += '<div class="summary" aria-live="polite">' + shown.length + ' item' + (shown.length === 1 ? '' : 's') + ' · ' + esc(label) + (S.who !== 'all' ? ' · ' + esc(owner(S.who).label) : '') + '</div>';
     if (!shown.length) return html + '<div class="empty">No history matches these filters.</div>';
@@ -1658,8 +1896,10 @@
     var p = S.prefs, g = p.game || ((CFG.GAMES || {})[S.person]) || 'puzzle';
     function o(key, cur, list) { return '<div class="opts" role="radiogroup">' + list.map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (String(cur) === String(x[0])) + '" data-act="pref" data-k="' + key + '" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>'; }
     return '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Wellness</span>' +
+      '<button class="btn" data-act="growsheet">' + svg(I.leaf, 16) + 'Tiny habits and keeping in touch</button>' +
+      '<button class="opt sw2" role="switch" aria-checked="' + Calm.on() + '" data-act="calmsound"><b>' + svg(I.speaker, 14) + ' Sound in the breathing guide</b><span>Voice, tone, chimes and a soft background</span></button>' +
       '<span class="note" style="font-size:.8125rem">Daily water goal</span>' + o('waterGoal', p.waterGoal, [['6', '6 glasses'], ['8', '8 glasses'], ['10', '10 glasses']]) +
-      '<span class="note" style="font-size:.8125rem">Each glass unlocks</span>' + '<div class="opts opts2" role="radiogroup">' + [['mix', 'Puzzles + data & cloud'], ['puzzle', 'Brain puzzles'], ['data', 'Data & cloud'], ['french', 'French A1\u2013C2'], ['off', 'Nothing']].map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (g === x[0]) + '" data-act="pref" data-k="game" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      '<span class="note" style="font-size:.8125rem">Water card puzzle</span>' + '<div class="opts opts2" role="radiogroup">' + [['mix', 'Puzzles + data & cloud'], ['puzzle', 'Brain puzzles'], ['data', 'Data & cloud'], ['french', 'French A1\u2013C2'], ['off', 'Nothing']].map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (g === x[0]) + '" data-act="pref" data-k="game" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>' +
       levelPicker(g === 'mix' ? 'data' : g) +
       '<div class="list"><button class="switch" role="switch" aria-checked="' + !!p.quotes + '" data-act="toggle" data-k="quotes"><span style="flex:1;display:flex;flex-direction:column;gap:2px"><b style="font-size:.9375rem">Quote or verse on Today</b><span class="note" style="font-size:.8125rem">A new one each time you open the app</span></span><span class="track" aria-hidden="true"><i></i></span></button></div></div>';
   }
@@ -1998,8 +2238,8 @@
       '<div class="wrow"><button class="btn small olive" data-act="waterplus">' + svg(I.plus, 16) + 'Add a glass</button>' +
       '<button class="btn small" data-act="waterminus" aria-label="Take one glass off"' + (have ? '' : ' disabled') + '>' + svg(I.minus, 16) + '</button>' +
       '<span class="wcount"><b>' + have + '</b> of ' + goal + ' glasses' + (have >= goal ? ' \u00b7 goal met' : '') + '</span></div>' +
-      (gs ? '<div class="note" style="font-size:.8125rem">Each glass unlocks ' + (kind === 'french' ? 'a French challenge' : kind === 'data' ? 'a data and cloud question' : kind === 'mix' ? 'a brain puzzle or a data and cloud question, in turn' : 'a brain puzzle') + '</div>' +
-        (kind === 'mix' ? trackBar('data') : trackBar(kind)) : '') + '</section>';
+      (gs ? '<button class="textbtn wpuzzle" data-act="wpuzzle">' + svg(I.spark, 15) + (kind === 'french' ? 'Fancy a 20-second French challenge?' : kind === 'data' ? 'Fancy a 20-second data question?' : 'Fancy a 20-second puzzle?') + '</button>' +
+        '<div class="note" style="font-size:.78rem">' + esc(trackLine(kind === 'mix' ? 'data' : kind)) + '</div>' + (kind === 'mix' ? trackBar('data') : trackBar(kind)) : '') + '</section>';
   }
   var waterTimer;
   function syncWater() {
@@ -2012,9 +2252,8 @@
     S.water[k] = glasses() + 1;
     var keep = {}; Object.keys(S.water).sort().slice(-400).forEach(function (x) { keep[x] = S.water[x]; }); S.water = keep;
     LS.set('fea.water', S.water); syncWater();
-    if (S.water[k] === goal) toast('Water goal met. Well done!');
-    var kind = gameKind();
-    if (kind !== 'off' && window.FEA_GAMES) startChallenge(nextKind()); else render();
+    toast(S.water[k] === goal ? 'Water goal met. Well done!' : 'Glass ' + S.water[k] + ' of ' + goal + '. Nice.');
+    render();
   }
   function startChallenge(kind) {
     var gs = gameState(kind);
@@ -2070,16 +2309,11 @@
     view.setAttribute('data-tab', S.tab);
     view.innerHTML = header() +
       '<main id="main" class="' + (S.tab === 'ask' ? 'ask ' + (S.files.length || S.reading || S.ref ? 'tall ' : '') : '') + (anim ? 'enter' : '') + '">' + parts.map(function (h, i) { return anim ? stag(h, i) : h; }).join('') + '</main>' +
-      (S.tab === 'ask' ? composer() : '<button class="fab" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 24) + '<span>Jot it down</span></button>') + nav();
+      (S.tab === 'ask' ? composer() : '<button class="fab mini" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 24) + '<span>Jot it down</span></button>') + nav();
 
     main = document.getElementById('main');
     var fab = view.querySelector('.fab'), lastTop = 0;
-    if (fab) main.addEventListener('scroll', function () {
-      var t = main.scrollTop;
-      if (t > lastTop + 6 && t > 80) fab.classList.add('mini');
-      else if (t < lastTop - 6 || t < 40) fab.classList.remove('mini');
-      lastTop = t;
-    }, { passive: true });
+
     if (S.tab === 'ask') main.scrollTop = main.scrollHeight;
     else main.scrollTop = changed ? 0 : (scrollMemo[S.tab] || 0);
     if (active) {
@@ -2095,7 +2329,7 @@
   function renderOverlay() {
     if (S.mode !== 'app' || !S.sheet) { overlay.innerHTML = ''; return; }
     var focusId = document.activeElement && overlay.contains(document.activeElement) ? document.activeElement.id : '';
-    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : snoozeSheet();
+    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : S.sheet === 'grow' ? growSheet() : snoozeSheet();
     S.sheetFresh = false;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
@@ -2105,7 +2339,7 @@
   function toast(text, opts) {
     opts = opts || {};
     clearTimeout(toastTimer);
-    toastEl.innerHTML = '<span>' + esc(text) + '</span>' + (opts.undo ? '<button class="btn small" data-act="undo" data-id="' + esc(opts.undo) + '">Undo</button>' : '');
+    toastEl.innerHTML = '<span>' + esc(text) + '</span>' + (opts.undo ? '<button class="btn small" data-act="undo" data-id="' + esc(opts.undo) + '">Undo</button>' : '') + (opts.btn ? '<button class="btn small" data-act="' + esc(opts.btn.act) + '" data-id="' + esc(opts.btn.id || '') + '">' + esc(opts.btn.label) + '</button>' : '');
     toastEl.classList.add('show');
     toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, opts.ms || 3200);
   }
@@ -2119,6 +2353,7 @@
     if (!el) return;
     var act = el.getAttribute('data-act'), v = el.getAttribute('data-v'), id = el.getAttribute('data-id');
     var item;
+    if (growClick(act, id, v)) return;
     switch (act) {
       case 'tab': setTab(v); break;
       case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;
@@ -2184,6 +2419,9 @@
       case 'newquote': S.quoteTheme = freshTheme(quoteTheme()); LS.set('fea.qTheme', S.quoteTheme); S.quoteIdx = Math.floor(Math.random() * 50); render(); break;
       case 'quotetheme': var qn = quotePool().length; S.quoteIdx = qn > 1 ? (S.quoteIdx % qn + 1 + Math.floor(Math.random() * (qn - 1))) % qn : 0; render(); break;
       case 'waterplus': addGlass(); break;
+      case 'histfilters': S.histFilters = !S.histFilters; render(); break;
+      case 'histclear': S.month = 'all'; S.mod = 'all'; S.who = 'all'; render(); break;
+      case 'wpuzzle': if (window.FEA_GAMES && gameKind() !== 'off') startChallenge(nextKind()); break;
       case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); syncWater(); render(); } break;
       case 'canswer': answerChallenge(v); break;
       case 'cmore': startChallenge(gameKind() === 'mix' ? nextKind() : (S.challenge ? S.challenge.c.kind : gameKind())); break;
@@ -2206,7 +2444,7 @@
       case 'grdelete': grOp(id, 'delete'); break;
       case 'grprompt': S.grPromptIdx = (S.grPromptIdx || 0) + 1; var gin2 = document.getElementById('gr-input'); if (gin2) S.grText = gin2.value; render(); break;
       case 'breathe': startBreath(); break;
-      case 'calmsound': S.prefs.calmSound = !Calm.on(); applyPrefs(); if (Calm.on()) Calm.start(); else Calm.stop(); renderOverlay(); break;
+      case 'calmsound': S.prefs.calmSound = !Calm.on(); applyPrefs(); if (S.sheet === 'breathe') { if (Calm.on()) Calm.start(); else Calm.stop(); } renderOverlay(); break;
       case 'calmdone': markCalm(calmSlot().key); render(); toast('Lovely. One calm moment done.'); break;
       case 'grmore': S.grMore = true; render(); var gi2 = document.getElementById('gr-input'); if (gi2) gi2.focus(); break;
       case 'savejot': saveJot(); break;
@@ -2298,6 +2536,7 @@
     if (e.target.id === 'key-input' && S.linkError) { S.linkError = ''; }
   }
   function onSubmit(e) {
+    if (growSubmit(e.target.id)) { e.preventDefault(); return; }
     if (e.target.id === 'chat-form') { e.preventDefault(); S.draft = document.getElementById('chat-input').value; sendChat(); }
     if (e.target.id === 'gr-form') { e.preventDefault(); addGratitude(); }
     if (e.target.id === 'g-form') { e.preventDefault(); var gi = document.getElementById('g-input'); addGrocery(gi.value); }

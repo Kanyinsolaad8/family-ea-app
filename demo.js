@@ -88,6 +88,18 @@
       { id: 'gr4', person: 'itunu', day: dayKey(-1), text: 'Private to Itunu.', shared: false, created: at(-1, 21) }
     ],
     doneToday: 2,
+    events: [
+      { id: 'ev1', title: 'Dinner at Tolu\u2019s', start: at(0, 19, 30), end: at(0, 21, 30), allDay: false, location: 'Clifton' },
+      { id: 'ev2', title: 'Bin day', start: at(1, 0), end: at(2, 0), allDay: true, location: '' },
+      { id: 'ev3', title: 'Itunu: Bristol office', start: at(2, 9), end: at(2, 17), allDay: false, location: 'BS1' },
+      { id: 'ev4', title: 'Church and lunch', start: at(5, 10, 30), end: at(5, 14), allDay: false, location: '' }
+    ],
+    kv: { ayo: {}, itunu: {} },
+    wins: [
+      { id: 'w1', person: 'itunu', text: 'Booked the passport appointment', day: dayKey(-1) },
+      { id: 'w2', person: 'ayo', text: 'Sorted the broadband complaint', day: dayKey(0) }
+    ],
+    checkins: {},
     alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, midday: false, water: false, open5: false, reply: true, quiet: '22-7', paused: false },
     messages: [
       { id: 'd1', ts: new Date(now - 5 * 3600000).toISOString(), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
@@ -116,6 +128,9 @@
           queue: store.queue, messages: store.messages,
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
           snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
+          events: store.events, kv: Object.assign({ wins: store.wins.filter(function (w) { return w.person === p; }).map(function (w) { return { id: w.id, text: w.text, day: w.day }; }) }, store.kv[p] || {}),
+          wins: store.wins.map(function (w) { return { id: w.id, text: w.text, day: w.day, from: w.person === p ? '' : w.person }; }),
+          checkin: (function () { var n = new Date(); n.setDate(n.getDate() - n.getDay()); var wk = n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2); var c = store.checkins[wk] || {}, o = p === 'ayo' ? 'itunu' : 'ayo'; return { week: wk, mine: c[p] || null, theirs: c[p] && c[o] ? c[o] : null, theirsDone: !!c[o] }; })(),
           gratitude: store.gratitude.filter(function (g) { return g.person && (g.person === p || g.shared); }).map(function (g) { return { id: g.id, day: g.day, text: g.text, shared: !!g.shared, from: g.person === p ? '' : g.person, created: g.created }; })
         });
       });
@@ -193,6 +208,13 @@
         }
         if (body.type === 'prefs') { ['morning', 'evening', 'midday', 'water', 'open5', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
+        if (body.type === 'kv') {
+          var nm = String(body.name || '');
+          if (nm === 'wins') { store.wins = store.wins.filter(function (w) { return w.person !== p; }).concat((body.value || []).map(function (w) { return { id: w.id, person: p, text: w.text, day: w.day }; })); }
+          else if (nm.indexOf('checkin_') === 0) { var wk = nm.slice(8), o = p === 'ayo' ? 'itunu' : 'ayo'; store.checkins[wk] = store.checkins[wk] || {}; store.checkins[wk][p] = body.value.a; return { ok: true, theirs: store.checkins[wk][o] || null }; }
+          else { store.kv[p] = store.kv[p] || {}; store.kv[p][nm] = body.value; }
+          return { ok: true };
+        }
         if (body.type === 'message') {
           var id = 'm' + Date.now();
           var files = (body.files || []).map(function (f) { return { name: f.name, mime: f.mime, size: Math.round((f.data || '').length * 0.75) }; });
