@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.8.0';
+  var VERSION = '1.8.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -1722,10 +1722,10 @@
         status = '<div class="status ' + (dec === 'never' ? 'never' : 'done') + '">' + svg(I.check, 18) + esc(i.outcome || 'Done by your EA') + '</div>';
       }
       html.push('<article class="card house">' +
-        '<div style="display:flex;gap:12px;align-items:flex-start"><div class="grow"><div class="price">' + esc(x.price || '') + '</div><div style="font-weight:700">' + esc(i.title) + '</div><div class="note" style="font-size:.8125rem">' + esc(x.listed || dayLabel(i.created)) + '</div></div>' +
+        '<div style="display:flex;gap:12px;align-items:flex-start"><div class="grow"><div class="price">' + esc(x.price || '') + '</div><div style="font-weight:700">' + esc(i.title) + '</div>' + (i.summary ? '<div style="font-size:.875rem">' + esc(i.summary) + '</div>' : '') + '<div class="note" style="font-size:.8125rem">' + esc(x.listed || dayLabel(i.created)) + '</div></div>' +
         '<div class="score" aria-label="Score ' + esc(x.score) + ' out of 100">' + scoreRing(x.score) + '<b>' + esc(x.score || '–') + '</b><span>/100</span></div></div>' +
         '<div class="tags">' + ochip(i.for) + (x.chips || []).map(function (c) { return '<span class="soft">' + esc(c) + '</span>'; }).join('') + '</div>' +
-        (x.why || x.lifestyle ? '<div class="why"><span class="h2" style="font-size:.75rem">Why this one</span><span>' + esc(x.why || '') + '</span>' + (x.lifestyle ? '<span class="note" style="font-size:.8125rem">' + esc(x.lifestyle) + '</span>' : '') + '</div>' : '') +
+        (x.why || x.lifestyle ? '<div class="why"><span class="h2" style="font-size:.75rem">Why this one</span><span>' + esc(x.why || '') + '</span>' + (x.gap ? '<span style="font-size:.875rem"><b>Watch out:</b> ' + esc(x.gap) + '</span>' : '') + (x.lifestyle ? '<span class="note" style="font-size:.8125rem">' + esc(x.lifestyle) + '</span>' : '') + '</div>' : '') +
         (rows ? '<button class="row-between textbtn" style="color:var(--ink);min-height:44px;width:100%" data-act="score" data-id="' + esc(i.id) + '" aria-expanded="' + open + '"><span>Score breakdown</span><span style="color:var(--accentInk)">' + (open ? 'Hide' : 'Show') + '</span></button>' +
           '<div class="bars' + (open ? ' open' : '') + '" id="bars-' + esc(i.id) + '"><div>' + rows + '</div></div>' : '') +
         ((listing || map) ? '<div class="btns">' + (listing ? '<a class="btn" href="' + esc(listing) + '" target="_blank" rel="noopener">View listing ' + svg(I.ext, 14) + '</a>' : '') + (map ? '<a class="btn" href="' + esc(map) + '" target="_blank" rel="noopener">Commute map ' + svg(I.ext, 14) + '</a>' : '') + '</div>' : '') +
