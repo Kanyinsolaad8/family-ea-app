@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.7.2';
+  var VERSION = '1.8.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -272,14 +272,14 @@
   };
 
   function accept(res, startedAt) {
-    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin } : null;
+    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin, food: S.data.food } : null;
     S.data = {
       items: (res.items || []).filter(function (i) { return canSee(i.for); }).map(function (i) { i.data = i.data || {}; return i; }),
       history: (res.history || []).filter(function (h) { return canSee(h.for); }),
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
-      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null
+      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null
     };
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
     (S.localNotes || []).forEach(function (n) { if (!S.data.notes.some(function (x) { return x.id === n.id; })) S.data.notes.push(n); });
@@ -1209,6 +1209,112 @@
     return false;
   }
 
+  /* ───────── Food: a Sunday batch cook, quick ideas for each part of the day, snacks, one treat night ─────────
+     The plan is shared by you both (the same batch each week); the ideas rotate. */
+  var FD = window.FEA_FOOD || null;
+  var DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], DAYNAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function foodWeek() { var n = dayStart(new Date()); n.setDate(n.getDate() - ((n.getDay() + 6) % 7)); return dayKeyOf(n); } // Monday of this week
+  function foodState() { var f = S.data.food || {}; return f.week === foodWeek() ? f : { week: foodWeek() }; }
+  function foodSave(patch) {
+    var f = Object.assign({}, foodState(), patch, { week: foodWeek() });
+    S.data.food = f; S.gChangedAt = Date.now(); render();
+    api.post({ type: 'kv', name: 'food', value: f }).catch(function () { toast('Couldn’t save the food plan. Try again.'); });
+  }
+  function foodBase() {
+    if (!FD) return null;
+    var f = foodState(), wk = Math.floor(new Date(foodWeek() + 'T12:00:00').getTime() / (7 * 86400000));
+    var i = typeof f.base === 'number' ? f.base : wk % FD.BASES.length;
+    return FD.BASES[((i % FD.BASES.length) + FD.BASES.length) % FD.BASES.length];
+  }
+  // Batch day is Sunday; the plan Monday–Sunday hangs off it.
+  function dinnerFor(dow) {
+    var b = foodBase(), d = DAYS[dow], f = foodState();
+    if (f.swaps && f.swaps[d]) return { name: f.swaps[d], kind: 'swap' };
+    if (d === 'fri') return { name: 'Treat night: order in (' + FD.TREAT.budget + ')', kind: 'treat' };
+    if (b.week[d]) return { name: b.week[d], kind: d === 'sun' ? 'batch' : 'base' };
+    var q = FD.MEALS.filter(function (m) { return m.slot === 'dinner' && (d === 'sat' ? m.style === 'fakeaway' || m.style === 'nocook' : m.style === 'quick'); });
+    var pick = q[(Math.floor(Date.now() / (7 * 86400000)) + dow) % q.length];
+    return { name: pick.name, kind: d === 'sat' ? 'fakeaway' : 'quick', m: pick };
+  }
+  function foodSlot() { var h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? 'breakfast' : h < 15 ? 'lunch' : h < 17 ? 'snack' : h < 21 ? 'dinner' : 'late'; }
+  function foodIdea(slot) {
+    var shift = +(S.foodShift || 0), dayN = Math.floor(dayStart(new Date()).getTime() / 86400000) + (S.person === 'itunu' ? 3 : 0);
+    if (slot === 'snack' || slot === 'late') {
+      var sn = FD.SNACKS.filter(function (x) { return slot === 'late' ? x.kcal <= 130 && x.kind === 'Everyday' : x.kind === 'Everyday'; });
+      return sn[(dayN + shift) % sn.length];
+    }
+    var b = foodBase(), list = FD.MEALS.filter(function (m) { return m.slot === slot; });
+    if (slot === 'lunch' && shift % (list.length + 1) === 0 && new Date().getDay() !== 0) return { name: b.lunch, mins: 5, note: 'From Sunday’s cook' };
+    return list[(dayN + shift) % list.length];
+  }
+  function foodMeta(m) {
+    if (!m) return '';
+    return [m.mins ? m.mins + ' min' : '', m.kcal ? '~' + m.kcal + ' kcal' : '', m.protein ? m.protein + 'g protein' : '', m.note || ''].filter(Boolean).join(' · ');
+  }
+  function foodCard() {
+    if (!FD) return '';
+    var slot = foodSlot(), dow = new Date().getDay(), b = foodBase(), f = foodState(), tonight = dinnerFor(dow);
+    var label = { breakfast: 'Breakfast idea', lunch: 'Lunch idea', snack: 'Snack idea', dinner: 'Tonight', late: 'If you’re peckish' }[slot];
+    var main = slot === 'dinner' ? { name: tonight.name, mins: tonight.m && tonight.m.mins, kcal: tonight.m && tonight.m.kcal, protein: tonight.m && tonight.m.protein, note: tonight.kind === 'base' ? 'From Sunday’s cook, just reheat' : tonight.kind === 'batch' ? 'Batch cook day' : '' } : foodIdea(slot);
+    var h = '<section class="card pad stack foodc" aria-label="Food"><div class="row-between"><span class="h2 foodh">' + svg(I.leaf, 13) + ' Food · ' + label + '</span><button class="textbtn" data-act="foodplan">Week plan</button></div>';
+    h += '<p class="fmain"><b>' + esc(main.name) + '</b>' + (foodMeta(main) ? '<span>' + esc(foodMeta(main)) + '</span>' : '') + '</p>';
+    if (slot !== 'dinner' && slot !== 'late') h += '<p class="fsub">' + svg(I.moon, 13) + ' Tonight: ' + esc(tonight.name) + '</p>';
+    if (dow === 0 && new Date().getHours() < 19) h += '<p class="fsub">' + svg(I.spark, 13) + ' Batch cook today: <b>' + esc(b.name) + '</b> · about ' + b.mins + ' min, one pot and one tray.</p>';
+    h += '<div class="calmbtns">' + (slot !== 'dinner' ? '<button class="btn small" data-act="foodnext">' + svg(I.shuffle, 15) + 'Something else</button>' : '') +
+      (f.shop !== foodWeek() && (dow === 0 || dow === 6 || dow === 5) ? '<button class="btn small olive" data-act="foodshop">' + svg(I.plus, 15) + 'Add batch shopping</button>' : '') + '</div>';
+    return h + '</section>';
+  }
+  function foodView() {
+    if (!FD) return '<div class="empty">Food ideas are loading.</div>';
+    var b = foodBase(), f = foodState(), dow = new Date().getDay();
+    var html = '<section class="card pad stack foodc"><span class="h2 foodh">' + svg(I.spark, 13) + ' This week’s Sunday cook</span>' +
+      '<b class="fbase">' + esc(b.name) + '</b><p class="note" style="margin:0">' + esc(b.what) + ' About ' + b.mins + ' min · roughly £' + b.cost + ' of shopping.</p>' +
+      '<div class="calmbtns">' + (f.shop === foodWeek() ? '<span class="note">' + svg(I.check, 14) + ' Shopping added to the list</span>' : '<button class="btn small olive" data-act="foodshop">' + svg(I.plus, 15) + 'Add the shopping (' + b.shop.length + ' items)</button>') +
+      '<button class="btn small" data-act="foodswap">' + svg(I.shuffle, 15) + 'Different cook</button></div></section>';
+    // the week
+    html += '<section class="stack"><h2 class="h2">Dinners this week</h2><ul class="fweek">' + [1, 2, 3, 4, 5, 6, 0].map(function (d) {
+      var x = dinnerFor(d), tag = { batch: 'Batch day', base: 'Reheat', quick: '20 min', fakeaway: 'Fakeaway', treat: 'Treat', swap: 'Your pick' }[x.kind];
+      return '<li class="' + (d === dow ? 'now' : '') + '"><span class="fd">' + DAYNAME[d].slice(0, 3) + '</span><span class="fn">' + esc(x.name) + '</span><span class="ft t-' + x.kind + '">' + tag + '</span></li>';
+    }).join('') + '</ul></section>';
+    // treat night
+    html += '<section class="card pad stack"><span class="h2 foodh">' + svg(I.heart, 13) + ' Friday treat night · ' + esc(FD.TREAT.budget) + '</span>' +
+      '<p class="note" style="margin:0">This week, try: <b>' + esc(FD.TREAT.cuisines[Math.floor(Date.now() / (7 * 86400000)) % FD.TREAT.cuisines.length]) + '</b>.</p><ul class="ftips">' + FD.TREAT.tips.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></section>';
+    // ideas
+    var sl = S.foodSlot || 'breakfast';
+    html += '<section class="stack"><h2 class="h2">Quick ideas</h2><div class="chips" role="group" aria-label="Meal">' + [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner'], ['snack', 'Snacks']].map(function (x) {
+      return '<button class="fchip" data-act="foodslot" data-v="' + x[0] + '" aria-pressed="' + (sl === x[0]) + '">' + x[1] + '</button>';
+    }).join('') + '</div>';
+    if (sl === 'snack') {
+      html += '<ul class="flist">' + FD.SNACKS.map(function (s) { return '<li><span class="fn">' + esc(s.name) + (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</span><span class="fk">~' + s.kcal + ' kcal · ' + s.protein + 'g</span><span class="ft ' + (s.kind === 'Treat' ? 't-treat' : 't-quick') + '">' + s.kind + '</span></li>'; }).join('') + '</ul>';
+    } else {
+      html += '<ul class="flist">' + FD.MEALS.filter(function (m) { return m.slot === sl; }).map(function (m) {
+        return '<li><span class="fn">' + esc(m.name) + (m.note ? '<small>' + esc(m.note) + '</small>' : '') + '</span><span class="fk">' + m.mins + ' min · ~' + m.kcal + ' kcal · ' + m.protein + 'g</span>' +
+          (sl === 'dinner' ? '<button class="textbtn" data-act="foodpick" data-v="' + esc(m.name) + '" aria-label="Have this on a day this week">Use</button>' : '') + '</li>';
+      }).join('') + '</ul>';
+    }
+    html += '</section>';
+    html += '<section class="card pad stack"><span class="h2 foodh">' + svg(I.leaf, 13) + ' Easier cooking</span><ul class="ftips">' + FD.TIPS.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
+      '<p class="note" style="margin:0">Rough weekly guide: home shop £55–70, treat night £25–30, snacks £10–15, about ' + FD.weekly + ' in all. Calories, protein and prices are rough guides.</p></section>';
+    return html;
+  }
+  function foodClick(act, v) {
+    if (!FD) return false;
+    switch (act) {
+      case 'foodplan': S.listSeg = 'food'; setTab('lists'); return true;
+      case 'foodnext': S.foodShift = (+(S.foodShift || 0)) + 1; render(); return true;
+      case 'foodslot': S.foodSlot = v; render(); return true;
+      case 'foodswap': var f = foodState(), cur = FD.BASES.indexOf(foodBase()); foodSave({ base: (cur + 1) % FD.BASES.length, shop: '' }); toast('This week: ' + foodBase().name); return true;
+      case 'foodshop':
+        var b = foodBase(); b.shop.forEach(function (x) { addGrocery(x); });
+        foodSave({ shop: foodWeek() }); toast('Added ' + b.shop.length + ' items to your shared shopping list.'); return true;
+      case 'foodpick':
+        // put this dinner on the next quick night (Wed or Sat) that isn't already your pick
+        var st = foodState(), sw = Object.assign({}, st.swaps || {}), day = ['wed', 'sat', 'thu', 'tue', 'mon'].filter(function (d) { return !sw[d]; })[0] || 'wed';
+        sw[day] = v; foodSave({ swaps: sw }); toast('On ' + DAYNAME[DAYS.indexOf(day)] + ': ' + v); return true;
+    }
+    return false;
+  }
+
   function today() {
     var all = needs();
     var jots = openNotes().map(function (n) { return { owner: n.shared ? 'both' : S.person, title: n.text, sub: n.remindAt ? whenLabel(n.remindAt) : 'No time set', go: 'lists', jot: true }; });
@@ -1243,6 +1349,7 @@
     // "Your day": what's next, then the rest of today by morning, afternoon and evening.
     var day = yourDay(all);
     html.push(day.html);
+    var fc = foodCard(); if (fc) html.push(fc);
     var ci = checkinCard(); if (ci) html.push(ci);
     html.push(growCard());
     var qc = quoteCard(); if (qc) html.push(qc);
@@ -1706,7 +1813,7 @@
     var g = S.data.groceries || [], notes = S.data.notes || [];
     var toBuy = g.filter(function (x) { return !x.ticked; }), basket = g.filter(function (x) { return x.ticked; });
     var other = Object.keys(PEOPLE).filter(function (k) { return k !== S.person; }).map(function (k) { return PEOPLE[k]; })[0] || 'the family';
-    var html = [askBar(), '<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Groceries · ' + toBuy.length], ['mine', 'My list · ' + openNotes().length], ['grateful', 'Grateful']].map(function (x) {
+    var html = [askBar(), '<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Shop · ' + toBuy.length], ['food', 'Food'], ['mine', 'My list · ' + openNotes().length], ['grateful', 'Grateful']].map(function (x) {
       return '<button role="tab" aria-selected="' + (S.listSeg === x[0]) + '" data-act="listseg" data-v="' + x[0] + '">' + esc(x[1]) + '</button>';
     }).join('') + '</div>'];
     if (S.listSeg === 'groceries') {
@@ -1725,6 +1832,8 @@
         html.push('<section class="stack" style="gap:8px"><h2 class="h2">' + esc(a) + ' · ' + rows.length + '</h2><div class="list">' + rows.map(groceryRow).join('') + '</div></section>');
       });
       if (basket.length) html.push('<section class="stack" style="gap:8px"><div class="row-between"><h2 class="h2">In the basket · ' + basket.length + '</h2><button class="textbtn" data-act="gclear">Clear basket</button></div><div class="list basket">' + basket.map(groceryRow).join('') + '</div></section>');
+    } else if (S.listSeg === 'food') {
+      html.push(foodView());
     } else if (S.listSeg === 'grateful') {
       var gr = (S.data.gratitude || []).slice().sort(function (a, b) { return String(b.day).localeCompare(String(a.day)) || String(b.created).localeCompare(String(a.created)); });
       html.push('<div class="card pad stack grat"><b class="gq">What are you grateful for today?</b>' + gratitudeForm() + '</div>');
@@ -2395,6 +2504,7 @@
     var act = el.getAttribute('data-act'), v = el.getAttribute('data-v'), id = el.getAttribute('data-id');
     var item;
     if (growClick(act, id, v)) return;
+    if (foodClick(act, v)) return;
     switch (act) {
       case 'tab': setTab(v); break;
       case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;

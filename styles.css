@@ -779,3 +779,28 @@ html.dark{--toastBg:#CCDAA8;--toastFg:#11160A}
 main:not(.ask) .btns,main:not(.ask) .calmbtns,main:not(.ask) .nx-btns,main:not(.ask) .cardtools{padding-right:50px}
 .growc .connect{background:none}
 .growc .fchip{padding:0 10px;font-size:.78rem}
+/* v1.8 food */
+.foodc{gap:8px;background:linear-gradient(160deg,var(--surface),var(--goldSoft))}
+.foodh{font-family:var(--reading)!important;font-size:.75rem!important;letter-spacing:.06em;text-transform:uppercase;font-weight:600;display:inline-flex;align-items:center;gap:6px;color:var(--gold)!important}
+.fmain{margin:0;display:flex;flex-direction:column;gap:2px;line-height:1.35}
+.fmain b{font-size:1.02rem}
+.fmain span,.fsub{font-size:.8125rem;color:var(--muted)}
+.fsub{margin:0;line-height:1.4}
+.fsub svg{vertical-align:-2px;margin-right:3px}
+.fbase{font-family:var(--display);font-size:1.15rem}
+.fweek,.flist,.ftips{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.fweek li,.flist li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--surfaceSolid);border:1px solid var(--line);font-size:.9rem;line-height:1.35}
+.fweek li.now{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.fd{font-weight:700;width:34px;flex-shrink:0;color:var(--muted)}
+.fn{flex:1;min-width:0;display:flex;flex-direction:column}
+.fn small{color:var(--muted);font-size:.75rem}
+.fk{font-size:.75rem;color:var(--muted);white-space:nowrap}
+.flist li{flex-wrap:wrap}
+.flist .fk{flex-basis:100%;order:3}
+.ft{font-size:.6875rem;font-weight:700;padding:2px 8px;border-radius:8px;background:var(--surface2);color:var(--ink);white-space:nowrap}
+.ft.t-batch,.ft.t-base{background:var(--accentSoft);color:var(--accentInk)}
+.ft.t-treat{background:var(--goldSoft);color:var(--gold)}
+.ft.t-fakeaway{background:var(--ayoSoft);color:var(--ayo)}
+.ftips li{font-size:.875rem;line-height:1.45;padding-left:14px;position:relative}
+.ftips li::before{content:"";position:absolute;left:2px;top:.6em;width:5px;height:5px;border-radius:3px;background:var(--gold)}
+.seg button{white-space:nowrap;padding:0 6px}

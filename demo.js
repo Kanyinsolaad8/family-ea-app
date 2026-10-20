@@ -128,7 +128,7 @@
           queue: store.queue, messages: store.messages,
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
           snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
-          events: store.events, kv: Object.assign({ wins: store.wins.filter(function (w) { return w.person === p; }).map(function (w) { return { id: w.id, text: w.text, day: w.day }; }) }, store.kv[p] || {}),
+          food: store.food || null, events: store.events, kv: Object.assign({ wins: store.wins.filter(function (w) { return w.person === p; }).map(function (w) { return { id: w.id, text: w.text, day: w.day }; }) }, store.kv[p] || {}),
           wins: store.wins.map(function (w) { return { id: w.id, text: w.text, day: w.day, from: w.person === p ? '' : w.person }; }),
           checkin: (function () { var n = new Date(); n.setDate(n.getDate() - n.getDay()); var wk = n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2); var c = store.checkins[wk] || {}, o = p === 'ayo' ? 'itunu' : 'ayo'; return { week: wk, mine: c[p] || null, theirs: c[p] && c[o] ? c[o] : null, theirsDone: !!c[o] }; })(),
           gratitude: store.gratitude.filter(function (g) { return g.person && (g.person === p || g.shared); }).map(function (g) { return { id: g.id, day: g.day, text: g.text, shared: !!g.shared, from: g.person === p ? '' : g.person, created: g.created }; })
@@ -210,6 +210,7 @@
         if (body.type === 'testalert') return { ok: true };
         if (body.type === 'kv') {
           var nm = String(body.name || '');
+          if (nm === 'food') { store.food = body.value; return { ok: true }; }
           if (nm === 'wins') { store.wins = store.wins.filter(function (w) { return w.person !== p; }).concat((body.value || []).map(function (w) { return { id: w.id, person: p, text: w.text, day: w.day }; })); }
           else if (nm.indexOf('checkin_') === 0) { var wk = nm.slice(8), o = p === 'ayo' ? 'itunu' : 'ayo'; store.checkins[wk] = store.checkins[wk] || {}; store.checkins[wk][p] = body.value.a; return { ok: true, theirs: store.checkins[wk][o] || null }; }
           else { store.kv[p] = store.kv[p] || {}; store.kv[p][nm] = body.value; }
