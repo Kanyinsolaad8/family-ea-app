@@ -1072,3 +1072,5 @@ html.s-xl .hdecide{grid-template-columns:1fr}
 html.rm .fab.fab2{animation:none}
 @media (prefers-reduced-motion:reduce){.fab.fab2{animation:none}}
 main{padding-bottom:calc(176px + env(safe-area-inset-bottom))}
+.toast .btn.ghost{border-color:transparent;opacity:.85;padding:0 8px}
+.toast .btn{white-space:nowrap;flex-shrink:0}

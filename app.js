@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.1.1';
+  var VERSION = '2.1.2';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -1778,7 +1778,26 @@
         this.nodes = { master: master, noise: noise, lfo: lfo, tone: tone, harm: harm, toneGain: toneGain };
       } catch (e) { this.nodes = null; }
     },
-    phase: function (name, secs) {
+    // A gentle, feminine voice where the phone has one (British first), a little slower and softer.
+    voice: function () {
+      var all = []; try { all = window.speechSynthesis.getVoices() || []; } catch (e) {}
+      var en = all.filter(function (x) { return /^en/i.test(x.lang); });
+      var fem = /(serena|kate|martha|stephanie|fiona|moira|karen|samantha|tessa|victoria|susan|allison|ava|zoe|libby|sonia|hazel|female)/i, male = /(daniel|arthur|oliver|male|george|rishi|aaron|fred|alex\b|tom\b|gordon|lee\b|ryan)/i;
+      var pick = function (list) { return list.filter(function (x) { return fem.test(x.name) && !/male/i.test(x.name.replace(/female/i, '')); })[0]; };
+      return pick(en.filter(function (x) { return /^en-GB/i.test(x.lang); })) || pick(en) || en.filter(function (x) { return /^en-GB/i.test(x.lang) && !male.test(x.name); })[0] || null;
+    },
+    say: function (text) {
+      if (!this.on()) return;
+      try {
+        if (!window.speechSynthesis) return;
+        if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(text), v = this.voice();
+        u.lang = v ? v.lang : 'en-GB'; if (v) u.voice = v;
+        u.rate = 0.8; u.pitch = v ? 1.05 : 1.2; u.volume = 0.8;
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    },
+    phase: function (name, secs, speak) {
       if (!this.on()) return;
       var n = this.nodes, c = this.ctx;
       if (n && c) {
@@ -1797,18 +1816,12 @@
           });
         } catch (e) {}
       }
-      try {
-        if (window.speechSynthesis) {
-          if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
-          var u = new SpeechSynthesisUtterance(name.toLowerCase()); u.lang = 'en-GB'; u.rate = 0.85; u.pitch = 0.95; u.volume = 1;
-          var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^en-GB/i.test(x.lang); })[0]; if (v) u.voice = v;
-          window.speechSynthesis.speak(u);
-        }
-      } catch (e) {}
+      // The voice speaks only on the first breath; after that the tones and chimes lead.
+      if (speak) this.say(name.toLowerCase() + '\u2026');
     },
-    stop: function () {
+    stop: function (keepVoice) {
       var n = this.nodes, c = this.ctx; this.nodes = null; this.retried = false;
-      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+      try { if (window.speechSynthesis && !keepVoice) window.speechSynthesis.cancel(); } catch (e) {}
       if (!n || !c) return;
       try {
         var t = c.currentTime; n.master.gain.cancelScheduledValues(t); n.master.gain.setValueAtTime(Math.max(0.0001, n.master.gain.value), t); n.master.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
@@ -1822,7 +1835,7 @@
     return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
       '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
       '<p class="note center" id="bleft">About a minute. Follow the circle.</p>' +
-      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">No sound? Turn the volume up, or flip the silent switch off.</span>' : '') + '</div>');
+      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">A gentle voice guides the first breath, then soft tones lead. No sound? Turn the volume up, or flip the silent switch off.</span>' : '') + '</div>');
   }
   function startBreath() {
     var m = calmSlot(); S.breath = { m: m, start: Date.now() };
@@ -1837,14 +1850,14 @@
       if (!ph) return;
       if (t < 0) return;
       if (t >= total) {
-        clearInterval(breathTimer); markCalm(m.key); Calm.stop(); ph.textContent = 'Well done'; ct.textContent = ''; ci.className = 'bcircle rest';
+        clearInterval(breathTimer); markCalm(m.key); Calm.say('Well done.'); Calm.stop(true); ph.textContent = 'Well done'; ct.textContent = ''; ci.className = 'bcircle rest';
         lf.textContent = 'Notice how you feel now.'; setTimeout(function () { if (S.sheet === 'breathe') { closeSheet(); render(); toast('A calm moment, done.'); } }, 2200); return;
       }
       var inCycle = t % (cycle * 1000), acc = 0, p = m.breath[0], left = 0;
       for (var i = 0; i < m.breath.length; i++) { if (inCycle < (acc + m.breath[i][1]) * 1000) { p = m.breath[i]; left = Math.ceil(((acc + m.breath[i][1]) * 1000 - inCycle) / 1000); break; } acc += m.breath[i][1]; }
       ct.textContent = left;
       if (p[0] !== lastPhase || (lastPhase === 'Hold' && ph.textContent !== p[0])) {
-        var prev = lastPhase; lastPhase = p[0]; ph.textContent = p[0]; Calm.phase(p[0], p[1]);
+        var prev = lastPhase; lastPhase = p[0]; ph.textContent = p[0]; Calm.phase(p[0], p[1], t < cycle * 1000);
         ci.style.transitionDuration = p[1] + 's';
         ci.className = 'bcircle ' + (p[0] === 'Breathe in' ? 'grow' : p[0] === 'Breathe out' ? 'shrink' : (prev === 'Breathe in' ? 'grow' : 'shrink'));
       }
@@ -2741,7 +2754,13 @@
     S.water[k] = glasses() + 1;
     var keep = {}; Object.keys(S.water).sort().slice(-400).forEach(function (x) { keep[x] = S.water[x]; }); S.water = keep;
     LS.set('fea.water', S.water); syncWater();
-    toast(S.water[k] === goal ? 'Water goal met. Well done!' : 'Glass ' + S.water[k] + ' of ' + goal + '. Nice.');
+    var msg = S.water[k] === goal ? 'Water goal met. Well done!' : 'Glass ' + S.water[k] + ' of ' + goal + '. Nice.';
+    var kind = gameKind(), offer = LS.get('fea.wOffer', { day: '', n: 0, at: 0 }); if (offer.day !== k) offer = { day: k, n: 0, at: 0 };
+    // Up to 3 gentle offers a day, at least 90 minutes apart. Never required.
+    if (window.FEA_GAMES && kind !== 'off' && offer.n < 3 && Date.now() - offer.at > 90 * 60000) {
+      offer.n++; offer.at = Date.now(); LS.set('fea.wOffer', offer);
+      toast(msg + ' Fancy a 20-second ' + (kind === 'french' ? 'French challenge' : kind === 'data' ? 'data question' : 'puzzle') + '?', { btn: { act: 'wpuzzle', label: 'Play' }, btn2: { act: 'toastclose', label: 'No thanks' }, ms: 8000 });
+    } else toast(msg);
     render();
   }
   function startChallenge(kind) {
@@ -2838,7 +2857,7 @@
   function toast(text, opts) {
     opts = opts || {};
     clearTimeout(toastTimer);
-    toastEl.innerHTML = '<span>' + esc(text) + '</span>' + (opts.undo ? '<button class="btn small" data-act="undo" data-id="' + esc(opts.undo) + '">Undo</button>' : '') + (opts.btn ? '<button class="btn small" data-act="' + esc(opts.btn.act) + '" data-id="' + esc(opts.btn.id || '') + '">' + esc(opts.btn.label) + '</button>' : '');
+    toastEl.innerHTML = '<span>' + esc(text) + '</span>' + (opts.undo ? '<button class="btn small" data-act="undo" data-id="' + esc(opts.undo) + '">Undo</button>' : '') + (opts.btn ? '<button class="btn small" data-act="' + esc(opts.btn.act) + '" data-id="' + esc(opts.btn.id || '') + '">' + esc(opts.btn.label) + '</button>' : '') + (opts.btn2 ? '<button class="btn small ghost" data-act="' + esc(opts.btn2.act) + '">' + esc(opts.btn2.label) + '</button>' : '');
     toastEl.classList.add('show');
     toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, opts.ms || 3200);
   }
@@ -2918,7 +2937,8 @@
       case 'waterplus': addGlass(); break;
       case 'histfilters': S.histFilters = !S.histFilters; render(); break;
       case 'histclear': S.month = 'all'; S.mod = 'all'; S.who = 'all'; render(); break;
-      case 'wpuzzle': if (window.FEA_GAMES && gameKind() !== 'off') startChallenge(nextKind()); break;
+      case 'wpuzzle': toastEl.classList.remove('show'); if (window.FEA_GAMES && gameKind() !== 'off') startChallenge(nextKind()); break;
+      case 'toastclose': clearTimeout(toastTimer); toastEl.classList.remove('show'); break;
       case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); syncWater(); render(); } break;
       case 'canswer': answerChallenge(v); break;
       case 'cmore': startChallenge(gameKind() === 'mix' ? nextKind() : (S.challenge ? S.challenge.c.kind : gameKind())); break;
