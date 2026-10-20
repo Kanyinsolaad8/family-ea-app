@@ -70,6 +70,7 @@
       [5, 12, 'intel', 'ayo', 'Sanctions update brief', 'Read', 'No action needed.']
     ].map(function (h, i) { return { id: 'hist-' + i, date: monthsAgo(h[0], h[1]), module: h[2], for: h[3], title: h[4], outcome: h[5], detail: h[6] }; }),
     queue: [],
+    appleNew: [{ id: 'ap1', kind: 'shop', itemId: 'g6', title: 'Buy oat milk', due: '' }, { id: 'ap2', kind: 'jot', itemId: 'n8', title: 'Book the boiler service', due: '' }],
     notes: [
       { id: 'n1', text: 'Renew the car insurance', created: at(-1), remindAt: at(0, 19), status: 'open', level: 'important' },
       { id: 'n2', text: 'Ask Tunde about the moving van', created: at(-2), remindAt: at(2, 18), status: 'open', level: 'normal' },
@@ -77,6 +78,7 @@
       { id: 'n4', text: 'Email the landlord about the boiler', created: at(-1), remindAt: '', status: 'open', level: 'normal' },
       { id: 'n5', text: 'Call the GP surgery about the letter', created: at(0, 7), remindAt: at(0, 10, 30), status: 'open', level: 'important' },
       { id: 'n6', text: 'Pick up the dry cleaning', created: at(0, 7), remindAt: at(0, 15), status: 'open', level: 'normal' },
+      { id: 'n8', text: 'Book the boiler service', created: at(0, 7), remindAt: at(3, 10), status: 'open', level: 'gentle', fromApple: true },
       { id: 'n7', text: 'Collect the parcel from the depot', created: at(-1, 20), remindAt: at(1, 17), status: 'open', level: 'normal', shared: true, from: 'itunu', onCalendar: true }
     ],
     groceries: [
@@ -84,6 +86,7 @@
       { id: 'g2', name: 'Plantain', qty: '4', aisle: 'Fruit & veg', addedBy: 'ayo', created: at(-1), ticked: false },
       { id: 'g3', name: 'Bread', qty: '', aisle: 'Bakery', addedBy: 'itunu', created: at(0), ticked: false },
       { id: 'g4', name: 'Rice', qty: '5kg', aisle: 'Cupboard', addedBy: 'ea', created: at(0), ticked: false },
+      { id: 'g6', name: 'Oat milk', qty: '', aisle: 'Dairy & eggs', addedBy: 'ayo', created: at(0, 7), ticked: false },
       { id: 'g5', name: 'Washing up liquid', qty: '', aisle: 'Household', addedBy: 'ayo', created: at(-2), ticked: true, tickedBy: 'itunu' }
     ],
     snoozes: [],
@@ -136,6 +139,7 @@
             .concat(store.items.filter(function (i) { return canSee(p, i.for) && i.status === 'done'; }).map(function (i) { return { id: i.id, date: i.created, module: i.module, for: i.for, title: i.title, outcome: i.outcome || '', detail: i.summary || '' }; }))
             .sort(function (a, b) { return a.date < b.date ? 1 : -1; }),
           queue: store.queue, messages: store.messages,
+          appleNew: store.appleNew || [],
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
           snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
           vents: (store.vents || []).filter(function (v) { return v.person === p; }).map(function (v) { return { id: v.id, day: v.day, text: v.text, created: v.created }; }),
@@ -220,6 +224,16 @@
         }
         if (body.type === 'prefs') { ['morning', 'evening', 'midday', 'water', 'open5', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
+        if (body.type === 'reminders') {
+          if (body.op === 'seen') { store.appleNew = (store.appleNew || []).filter(function (a) { return (body.ids || []).indexOf(a.id) < 0; }); return { ok: true }; }
+          if (body.op === 'move') {
+            var ap = (store.appleNew || []).filter(function (a) { return a.id === body.id; })[0]; if (!ap) return { ok: false, error: 'not_found' };
+            if (body.to === 'shop' && ap.kind === 'jot') { store.notes.forEach(function (n) { if (n.id === ap.itemId) n.status = 'deleted'; }); var gid = 'g' + Date.now(); store.groceries.push({ id: gid, name: ap.title.replace(/^(buy|get)\s+/i, ''), qty: '', aisle: 'Other', addedBy: 'ayo', created: new Date().toISOString(), ticked: false }); ap.kind = 'shop'; ap.itemId = gid; }
+            else if (body.to === 'jot' && ap.kind === 'shop') { store.groceries.forEach(function (g) { if (g.id === ap.itemId) g.removed = true; }); var nid2 = 'n' + Date.now(); store.notes.push({ id: nid2, text: ap.title, created: new Date().toISOString(), remindAt: '', status: 'open', level: 'gentle', fromApple: true }); ap.kind = 'jot'; ap.itemId = nid2; }
+            return { ok: true, kind: ap.kind, itemId: ap.itemId };
+          }
+          return { ok: true, received: 0, added: 0, ticked: 0 };
+        }
         if (body.type === 'housestage') {
           var hi = store.items.filter(function (i) { return i.id === body.itemId && i.module === 'houses'; })[0];
           if (!hi || hi.data.decision !== 'approve') return { ok: false, error: 'not_shortlisted' };

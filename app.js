@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.2.0';
+  var VERSION = '2.3.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -232,14 +232,14 @@
   var TABS = [['today', 'Today'], ['lists', 'Lists'], ['houses', 'Houses'], ['plan', 'Plan'], ['intel', 'Intel'], ['history', 'History']];
   var AISLE_ORDER = ['Fruit & veg', 'Bakery', 'Meat & fish', 'Dairy & eggs', 'Cupboard', 'Frozen', 'Drinks', 'Household', 'Toiletries', 'Other'];
   var AISLES = [
-    ['Fruit & veg', /\b(apple|banana|orange|lemon|lime|grape|berr|melon|mango|pear|plantain|tomato|potato|onion|garlic|ginger|pepper|chilli|carrot|lettuce|salad|spinach|cabbage|kale|broccoli|cucumber|mushroom|avocado|yam|okra|herb|coriander|parsley|veg|fruit)/],
+    ['Fruit & veg', /\b(apple|banana|orange|lemon|lime|grape|berr|melon|mango|pear|plantain|tomato|potato|onion|garlic|ginger|pepper|chilli|carrot|lettuce|salad|spinach|cabbage|kale|broccoli|cucumber|mushroom|avocado|yam|okra|bonnet|herb|coriander|parsley|veg|fruit)/],
     ['Meat & fish', /\b(chicken|beef|lamb|pork|mince|turkey|sausage|bacon|ham|goat|fish|salmon|tuna|cod|prawn|shrimp|mackerel|meat)/],
     ['Dairy & eggs', /\b(milk|cheese|butter|yog|cream|egg|custard)/],
+    ['Household', /\b(toilet|kitchen roll|tissue|bin bag|foil|cling|wash|detergent|softener|bleach|cleaner|sponge|dishwasher|batter|bulb|wipes)/],
     ['Bakery', /\b(bread|loaf|roll|bagel|wrap|pitta|croissant|bun|cake|muffin)/],
-    ['Cupboard', /\b(rice|pasta|spaghetti|noodle|flour|sugar|salt|oil|vinegar|beans|lentil|tin|can|sauce|stock|cube|cereal|oats|tea|coffee|honey|jam|spice|seasoning|crisps|biscuit|chocolate|snack|nuts|garri|semolina)/],
+    ['Cupboard', /\b(rice|pasta|spaghetti|noodle|flour|sugar|salt|oil|vinegar|beans|lentil|tin|can|sauce|stock|cube|cereal|oats|tea|coffee|honey|jam|spice|seasoning|crisps|biscuit|chocolate|snack|nuts|garri|semolina|cat food|dog food|pet food)/],
     ['Frozen', /\b(frozen|ice cream|peas|chips)/],
     ['Drinks', /\b(water|juice|squash|cola|coke|lemonade|wine|beer|drink)/],
-    ['Household', /\b(toilet|kitchen roll|tissue|bin bag|foil|cling|wash|detergent|softener|bleach|cleaner|sponge|dishwasher|battery|bulb)/],
     ['Toiletries', /\b(shampoo|conditioner|soap|shower|toothpaste|toothbrush|deodorant|razor|lotion|pads|tampon|nappies)/]
   ];
   function aisleFor(name) { var n = String(name || '').toLowerCase(); for (var i = 0; i < AISLES.length; i++) if (AISLES[i][1].test(n)) return AISLES[i][0]; return 'Other'; }
@@ -281,7 +281,7 @@
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
-      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || []
+      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || [], appleNew: res.appleNew || []
     };
     if (keep) S.data.items.forEach(function (i) { var o = oldHouses[i.id]; if (o) { i.data = o.data; i.status = o.status; } });
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
@@ -1497,6 +1497,8 @@
   function noticeTiles() {
     var out = [], dow = new Date().getDay(), c = S.data.checkin || {}, wk = checkinWeek();
     if (checkinCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="checkin">' + svg(I.heart, 16) + '<span><b>Weekly check-in</b><small>' + (c.week === wk && c.mine ? (c.theirs ? 'You’ve both answered — have a look' : 'Waiting for ' + esc(otherName())) : 'Three short questions for you both') + '</small></span>' + svg(I.chev, 16) + '</button>');
+    var an = (S.data.appleNew || []).length;
+    if (an) out.push('<button class="notice t-in" data-act="tilesheet" data-v="apple">' + svg(I.bell, 16) + '<span><b>From Apple Reminders \u00b7 ' + an + ' new</b><small>Check where they went</small></span>' + svg(I.chev, 16) + '</button>');
     if (lookBackCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="lookback">' + svg(I.history, 16) + '<span><b>Your week, looking back</b><small>Grateful and didn’t-like lines, only you</small></span>' + svg(I.chev, 16) + '</button>');
     return out.join('');
   }
@@ -1511,6 +1513,7 @@
     else if (k === 'checkin') { title = 'Weekly check-in'; body = checkinCard(); }
     else if (k === 'lookback') { title = 'Looking back'; body = lookBackCard(); }
     else if (k === 'calm') { title = 'Calm'; body = calmCard(); }
+    else if (k === 'apple') { title = 'From Apple Reminders'; body = appleSheetBody(); }
     return sheetWrap(title, '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">' + esc(title) + '</h2><button class="textbtn" data-act="closesheet">Done</button></div>' + body);
   }
   function today() {
@@ -1630,7 +1633,7 @@
   }
   function jotTags(n) {
     if (!n) return '';
-    return (n.from ? '<span class="jtag">From ' + esc(PEOPLE[n.from] || n.from) + '</span>' : n.shared ? '<span class="jtag both">Both</span>' : '') + (n.onCalendar ? '<span class="jcal" title="On the Family calendar" aria-label="On the Family calendar">' + svg(I.plan, 12) + '</span>' : '');
+    return (n.from ? '<span class="jtag">From ' + esc(PEOPLE[n.from] || n.from) + '</span>' : n.shared ? '<span class="jtag both">Both</span>' : '') + (n.fromApple ? '<span class="jtag apple">Reminders</span>' : '') + (n.onCalendar ? '<span class="jcal" title="On the Family calendar" aria-label="On the Family calendar">' + svg(I.plan, 12) + '</span>' : '');
   }
   function levelMark(l) { return l === 'important' ? '<span class="lvmark imp" title="Important" aria-label="Important"></span>' : l === 'gentle' ? '<span class="lvmark gen" title="Gentle, no alert" aria-label="Gentle, no alert"></span>' : ''; }
   function yourDay(needsList) {
@@ -1934,6 +1937,67 @@
     return '<svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="var(--line)" stroke-width="3"/><circle class="ring" cx="32" cy="32" r="29" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 32 32)"/></svg>';
   }
 
+  /* ───────── Apple Reminders: what came in, and where it went ───────── */
+  function appleWhere(a) {
+    if (a.kind === 'shop') return { label: 'Shopping list', note: 'Shared with ' + otherName() };
+    var n = noteById(a.itemId), t = n && n.remindAt ? Date.parse(n.remindAt) : NaN;
+    if (n && n.status === 'done') return { label: 'Done', note: '' };
+    if (isNaN(t)) return { label: 'My list', note: 'No date' };
+    if (t <= endOfToday().getTime()) return { label: 'Your day', note: whenLabel(n.remindAt) };
+    return { label: 'Plan ahead', note: whenLabel(n.remindAt) };
+  }
+  function appleSheetBody() {
+    var list = S.data.appleNew || [];
+    if (!list.length) return '<div class="empty">All checked. New reminders from your "Family EA" list show here once.</div>';
+    return '<div class="note">From your "Family EA" list in Apple Reminders. I’ve filed each one. Check they’re in the right place.</div>' +
+      '<div class="list">' + list.map(function (a) {
+        var w = appleWhere(a);
+        return '<div class="arow"><span class="col" style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0"><b>' + esc(a.title) + '</b>' +
+          '<span class="note" style="font-size:.8125rem"><span class="apill a-' + esc(w.label.replace(/\s+/g, '').toLowerCase()) + '">' + esc(w.label) + '</span>' + (w.note ? ' ' + esc(w.note) : '') + '</span></span>' +
+          '<span class="abtns">' + (a.kind === 'shop' ? '<button class="btn small" data-act="applemove" data-id="' + esc(a.id) + '" data-v="jot">Make it a jot</button>'
+            : '<button class="btn small" data-act="applemove" data-id="' + esc(a.id) + '" data-v="shop">To shopping</button>' + (noteById(a.itemId) ? '<button class="btn small" data-act="appleedit" data-id="' + esc(a.itemId) + '">Change</button>' : '')) + '</span></div>';
+      }).join('') + '</div>' +
+      '<div class="note" style="font-size:.8125rem">Jots with today’s date show in Your day, later dates in Plan ahead, no date in My list. They don’t buzz, because Apple already reminds you.</div>' +
+      '<button class="btn big primary" data-act="appleok">' + svg(I.check, 18) + 'Looks right</button>';
+  }
+  function appleSection() {
+    return '<details class="card pad stack apple"><summary class="row-between"><b>' + svg(I.bell, 16) + ' Link Apple Reminders</b><span class="note">Set up</span></summary>' +
+      '<div class="note">Anything you add to a Reminders list called "Family EA" comes into the app a few times a day. Shopping goes on the shared list; everything else becomes a private jot. Done in Apple means done here.</div>' +
+      '<ol class="asteps">' +
+        '<li>In <b>Reminders</b>, make a list called <b>Family EA</b>.</li>' +
+        '<li>In <b>Shortcuts</b>, tap <b>+</b> and name it <b>Sync Family EA</b>.</li>' +
+        '<li>Add <b>Find Reminders</b>. Add filters: List is Family EA, and Is Completed \u203a Is Not Completed.</li>' +
+        '<li>Add <b>Repeat with Each</b> (the reminders). Inside it add <b>Text</b>: Title<b>|||</b>Due Date<b>|||</b>Notes<b>|||</b>Creation Date. Tap each date and set Date Format to ISO 8601 with time.</li>' +
+        '<li>After End Repeat, add <b>Combine Text</b> (Repeat Results), separator Custom: <b>#FEA#</b></li>' +
+        '<li>Add <b>Get Contents of URL</b> with the link below. Method POST, Request Body JSON, four fields: <b>key</b> = your key, <b>type</b> = reminders, <b>data</b> = Combined Text, <b>count</b> = Count of Reminders (add a <b>Count</b> action on the Reminders just before this step).</li>' +
+        '<li>Tap \u25b6 to run it once by hand and allow it to use Reminders and the internet. Without that, the automatic runs can\u2019t work.</li>' +
+        '<li>In <b>Automation</b>, tap <b>+</b> › Time of Day: 7:00, daily, Run Immediately › Sync Family EA. Add two more for 12:00 and 18:00.</li>' +
+      '</ol>' +
+      '<div class="btns"><button class="btn" data-act="copyapi">Copy the link</button><button class="btn" data-act="copykey">Copy my key</button></div>' +
+      '<div class="note" style="font-size:.75rem">Your key only opens your own things. Keep the shortcut to yourself and don’t share it.</div></details>';
+  }
+  function appleClick(act, id, v) {
+    switch (act) {
+      case 'applemove':
+        api.post({ type: 'reminders', op: 'move', id: id, to: v }).then(function (r) {
+          if (!r || !r.ok) throw new Error();
+          (S.data.appleNew || []).forEach(function (a) { if (a.id === id) { a.kind = r.kind; a.itemId = r.itemId; } });
+          toast(v === 'shop' ? 'Moved to the shopping list.' : 'Made it a jot.'); return load({});
+        }).catch(function () { toast('Couldn’t move it. Try again.'); }).then(function () { if (S.sheet === 'tile') renderOverlay(); });
+        return true;
+      case 'appleedit': closeSheet(); if (startEdit(id)) openSheet('jot'); return true;
+      case 'appleok':
+        var ids = (S.data.appleNew || []).map(function (a) { return a.id; }); S.data.appleNew = []; closeSheet(); render();
+        api.post({ type: 'reminders', op: 'seen', ids: ids }).catch(function () {});
+        return true;
+      case 'copyapi':
+        if (navigator.clipboard) navigator.clipboard.writeText(CFG.API_URL).then(function () { toast('Link copied. Paste it into Get Contents of URL.'); }, function () { toast('Couldn’t copy. Link: ' + CFG.API_URL, { ms: 9000 }); });
+        else toast('Link: ' + CFG.API_URL, { ms: 9000 });
+        return true;
+    }
+    return false;
+  }
+
   /* ───────── Quick guide: a short tour the first time, then Help (?) any time ───────── */
   var GUIDE = [
     { tab: 'today', icon: 'today', title: 'Today, at a glance', tour: 'Everything for today on one screen: a verse or quote, what’s next, a calm moment, your journal, water, food and habits.',
@@ -1949,7 +2013,7 @@
     { tab: 'intel', icon: 'intel', title: 'Intel and History', tour: '',
       tips: ['Intel: your work briefs and migration updates, marked by how urgent they are.', 'History: six months of everything your EA has done. Search it or filter by month.'] },
     { tab: 'settings', icon: 'person', title: 'Settings and privacy', tour: 'Tap your initial (top right) for text size, dark mode, calm sound and alerts. Your private things stay private: only shared items reach the other person.',
-      tips: ['Text size and high contrast make everything easier to read.', 'Reduce motion turns off the animations.', 'Alerts: choose morning and evening reminders and quiet hours.', 'Tap ? (top right) to open this guide again.'] }
+      tips: ['Text size and high contrast make everything easier to read.', 'Reduce motion turns off the animations.', 'Alerts: choose morning and evening reminders and quiet hours.', 'Link Apple Reminders: Settings \u203a Link Apple Reminders walks you through a free iPhone shortcut. Add things to a Reminders list called "Family EA" and they come into the app.', 'Tap ? (top right) to open this guide again.'] }
   ];
   function guideIcon(g) { return svg(I[g.icon] || I.spark, 20); }
   function tourSheet() {
@@ -2468,6 +2532,7 @@
       '<div class="list">' + sw('hc', 'High contrast', 'Darker text and stronger edges') + sw('rm', 'Reduce motion', 'No slide or fade effects') + '</div>' +
       wellnessSection() +
       alertsSection() +
+      appleSection() +
       '<div class="stack" style="gap:8px">' + (S.demo ? '<button class="btn" data-act="exitdemo">Leave the demo</button>' :
         (S.unlinkAsk ? '<div class="note">Unlink this phone? You’ll need your key to link it again.</div><div class="btns"><button class="btn" data-act="unlinkno">Keep linked</button><button class="btn warn" data-act="unlinkyes">Unlink</button></div>'
           : '<button class="btn" data-act="copykey">Copy my key</button><button class="btn" data-act="unlinkask">Unlink this phone</button>')) +
@@ -2963,6 +3028,7 @@
     if (ventClick(act, id)) return;
     if (houseClick(act, id, v, el)) return;
     if (guideClick(act, v)) return;
+    if (appleClick(act, id, v)) return;
     switch (act) {
       case 'tab': setTab(v); break;
       case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;

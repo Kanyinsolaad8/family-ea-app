@@ -1111,3 +1111,16 @@ textarea{font:inherit}
 html.s-xl .water2 .bottle{flex:none;margin-top:0}
 html.s-xl .water2 .bottle .glass{flex:none;height:38px;min-height:0;width:28px}
 .drop.full{color:var(--sky)}.drop.full svg{fill:var(--skySoft)}
+/* v2.3 — Apple Reminders */
+.arow{display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.arow:first-child{border-top:0}
+.abtns{display:flex;gap:6px;flex-wrap:wrap}
+.abtns .btn{min-height:44px}
+.apill{display:inline-block;padding:2px 8px;border-radius:9px;font-weight:800;font-size:.75rem;background:var(--oliveSoft);color:var(--olive)}
+.apill.a-shoppinglist{background:var(--skySoft);color:var(--sky)}
+.apill.a-yourday{background:var(--claySoft);color:var(--clay)}
+.apill.a-planahead{background:var(--goldSoft);color:var(--gold)}
+.jtag.apple{background:var(--skySoft);color:var(--sky)}
+details.apple summary{cursor:pointer;list-style:none;min-height:44px;align-items:center}
+details.apple summary::-webkit-details-marker{display:none}
+.asteps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:.9rem;line-height:1.5}
