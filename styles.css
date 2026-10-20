@@ -1065,3 +1065,10 @@ html.s-xl .hdecide{grid-template-columns:1fr}
 .house .bars:not(.open){margin-top:-12px}
 .hbb{min-height:44px}
 .sheet .row-between > .textbtn[data-act="closesheet"]{min-height:44px;min-width:44px}
+/* v2.1.1 — floating Jot button, bottom right, as before */
+.fab.fab2{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));height:56px;padding:0 22px 0 16px;border-radius:28px;gap:8px;font-weight:800;font-size:1rem;background:var(--accent);color:var(--onAccent);box-shadow:0 10px 26px var(--fabShadow);z-index:6;animation:fabIn .4s var(--spring) both}
+.fab.fab2 span{max-width:none;opacity:1}
+@keyframes fabIn{from{opacity:0;transform:translateY(12px) scale(.9)}to{opacity:1;transform:none}}
+html.rm .fab.fab2{animation:none}
+@media (prefers-reduced-motion:reduce){.fab.fab2{animation:none}}
+main{padding-bottom:calc(176px + env(safe-area-inset-bottom))}

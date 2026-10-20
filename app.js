@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.1.0';
+  var VERSION = '2.1.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -944,7 +944,7 @@
     var me = owner(S.person);
     return '<header class="top"><div class="top-row"><div style="min-width:0">' +
       '<h1>' + esc(titles[S.tab] || '') + '</h1></div>' +
-      '<div class="hbtns">' + (S.tab !== 'ask' ? '<button class="hjot" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 22) + '</button>' : '') +
+      '<div class="hbtns">' + 
       '<button class="avatar ' + me.cls + '" data-act="settings" aria-label="Your settings and accessibility">' + esc(me.short) + '<span class="cog">' + svg(I.cog, 12) + '</span></button></div></div>' +
       '<div class="sync" id="sync">' + syncInner() + '</div></header>';
   }
@@ -2798,7 +2798,7 @@
     view.setAttribute('data-tab', S.tab);
     view.innerHTML = header() +
       '<main id="main" class="' + (S.tab === 'ask' ? 'ask ' + (S.files.length || S.reading || S.ref ? 'tall ' : '') : '') + (anim ? 'enter' : '') + '">' + parts.map(function (h, i) { return anim ? stag(h, i) : h; }).join('') + '</main>' +
-      (S.tab === 'ask' ? composer() : '') + nav();
+      (S.tab === 'ask' ? composer() : '<button class="fab fab2" data-act="jot" aria-label="Jot it down">' + svg(I.plus, 22) + '<span>Jot</span></button>') + nav();
 
     main = document.getElementById('main');
     var fab = view.querySelector('.fab'), lastTop = 0;
