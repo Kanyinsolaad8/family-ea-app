@@ -50,7 +50,8 @@ var TABLES = {
   Items: ['id', 'person', 'module', 'status', 'title', 'summary', 'detail', 'created', 'updated', 'due', 'outcome', 'data', 'source'],
   Actions: ['id', 'ts', 'person', 'itemId', 'action', 'label', 'payload', 'status', 'doneAt'],
   Messages: ['id', 'ts', 'person', 'from', 'text', 'status', 'ref', 'files'],
-  Notes: ['id', 'person', 'text', 'created', 'remindAt', 'status', 'sentAt', 'doneAt'],
+  Notes: ['id', 'person', 'text', 'created', 'remindAt', 'status', 'sentAt', 'doneAt', 'level', 'headsAt'],
+  Gratitude: ['id', 'person', 'day', 'text', 'shared', 'created'],
   Groceries: ['id', 'name', 'qty', 'aisle', 'addedBy', 'created', 'ticked', 'tickedBy', 'tickedAt', 'removed'],
   Snoozes: ['id', 'person', 'itemId', 'until', 'sentAt'],
   Pushes: ['id', 'person', 'endpoint', 'p256dh', 'auth', 'status', 'created', 'lastOk'],
@@ -99,6 +100,7 @@ function doPost(e) {
     if (body.type === 'action') return json_(handleAction_(person, body, new Date()));
     if (body.type === 'message') return json_(handleMessage_(person, body, new Date()));
     if (body.type === 'note') return json_(handleNote_(person, body, new Date()));
+    if (body.type === 'gratitude') return json_(handleGratitude_(person, body, new Date()));
     if (body.type === 'grocery') return json_(handleGrocery_(person, body, new Date()));
     if (body.type === 'snooze') return json_(handleSnooze_(person, body, new Date()));
     if (body.type === 'prefs') return json_(handlePrefs_(person, body));
@@ -334,7 +336,9 @@ function buildBootstrap_(person, now) {
     messages: msgs,
     notes: rows_('Notes').filter(function (n) {
       return n.person === person && (n.status === 'open' || (n.status === 'done' && (Date.parse(n.doneAt) || 0) > now.getTime() - 3 * dayMs));
-    }).map(function (n) { return { id: n.id, text: n.text, created: n.created, remindAt: n.remindAt, status: n.status, doneAt: n.doneAt }; }),
+    }).map(function (n) { return { id: n.id, text: n.text, created: n.created, remindAt: n.remindAt, status: n.status, doneAt: n.doneAt, level: n.level || 'normal' }; }),
+    gratitude: rows_('Gratitude').filter(function (g) { return g.person === person || (g.shared === '1' && (Date.parse(g.created) || 0) > now.getTime() - 60 * dayMs); })
+      .slice(-150).map(function (g) { return { id: g.id, day: g.day, text: g.text, shared: g.shared === '1', from: g.person === person ? '' : g.person, created: g.created }; }),
     groceries: rows_('Groceries').filter(function (g) {
       return !g.removed && (!g.ticked || (Date.parse(g.tickedAt) || 0) > now.getTime() - 2 * dayMs);
     }).map(function (g) { return { id: g.id, name: g.name, qty: g.qty, aisle: g.aisle, addedBy: g.addedBy, created: g.created, ticked: !!g.ticked, tickedBy: g.tickedBy }; }),
@@ -998,99 +1002,93 @@ function checkAlerts() {
 }
 
 /* Short quotes and verses for the 8am alert (generated from app/quotes.js). */
+// [theme, quote]. Same themes and order as app/quotes.js, so the 8am alert matches the app's theme of the day.
 var ALERT_QUOTES = [
-  "“I can do all things through Christ which strengtheneth me.” — Philippians 4:13",
-  "“Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.” — Philippians 4:6",
-  "“And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.” — Philippians 4:7",
-  "“For I know the thoughts that I think toward you, saith the LORD, thoughts of peace, and not of evil, to give you an expected end.” — Jeremiah 29:11",
-  "“This is the day which the LORD hath made; we will rejoice and be glad in it.” — Psalm 118:24",
-  "“Be still, and know that I am God.” — Psalm 46:10",
-  "“The LORD is my shepherd; I shall not want.” — Psalm 23:1",
-  "“Weeping may endure for a night, but joy cometh in the morning.” — Psalm 30:5",
-  "“Delight thyself also in the LORD; and he shall give thee the desires of thine heart.” — Psalm 37:4",
-  "“The steps of a good man are ordered by the LORD: and he delighteth in his way.” — Psalm 37:23",
-  "“Be strong and of a good courage; be not afraid, neither be thou dismayed: for the LORD thy God is with thee whithersoever thou goest.” — Joshua 1:9",
-  "“Ask, and it shall be given you; seek, and ye shall find; knock, and it shall be opened unto you.” — Matthew 7:7",
-  "“What things soever ye desire, when ye pray, believe that ye receive them, and ye shall have them.” — Mark 11:24",
-  "“Take therefore no thought for the morrow: for the morrow shall take thought for the things of itself.” — Matthew 6:34",
-  "“Come unto me, all ye that labour and are heavy laden, and I will give you rest.” — Matthew 11:28",
-  "“In every thing give thanks: for this is the will of God in Christ Jesus concerning you.” — 1 Thessalonians 5:18",
-  "“And let us not be weary in well doing: for in due season we shall reap, if we faint not.” — Galatians 6:9",
-  "“A soft answer turneth away wrath: but grievous words stir up anger.” — Proverbs 15:1",
-  "“Pride goeth before destruction, and an haughty spirit before a fall.” — Proverbs 16:18",
-  "“Commit thy works unto the LORD, and thy thoughts shall be established.” — Proverbs 16:3",
-  "“Where there is no vision, the people perish.” — Proverbs 29:18",
-  "“For as he thinketh in his heart, so is he.” — Proverbs 23:7",
-  "“Keep thy heart with all diligence; for out of it are the issues of life.” — Proverbs 4:23",
-  "“The hand of the diligent maketh rich.” — Proverbs 10:4",
-  "“The blessing of the LORD, it maketh rich, and he addeth no sorrow with it.” — Proverbs 10:22",
-  "“A merry heart doeth good like a medicine: but a broken spirit drieth the bones.” — Proverbs 17:22",
-  "“Death and life are in the power of the tongue.” — Proverbs 18:21",
-  "“Iron sharpeneth iron; so a man sharpeneth the countenance of his friend.” — Proverbs 27:17",
-  "“Write the vision, and make it plain upon tables, that he may run that readeth it.” — Habakkuk 2:2",
-  "“Thou shalt also decree a thing, and it shall be established unto thee: and the light shall shine upon thy ways.” — Job 22:28",
-  "“Fear thou not; for I am with thee: be not dismayed; for I am thy God: I will strengthen thee; yea, I will help thee.” — Isaiah 41:10",
-  "“Thou wilt keep him in perfect peace, whose mind is stayed on thee: because he trusteth in thee.” — Isaiah 26:3",
-  "“Peace I leave with you, my peace I give unto you… Let not your heart be troubled, neither let it be afraid.” — John 14:27",
-  "“Two are better than one; because they have a good reward for their labour.” — Ecclesiastes 4:9",
-  "“To every thing there is a season, and a time to every purpose under the heaven.” — Ecclesiastes 3:1",
-  "“Whatsoever thy hand findeth to do, do it with thy might.” — Ecclesiastes 9:10",
-  "“Beloved, I wish above all things that thou mayest prosper and be in health, even as thy soul prospereth.” — 3 John 1:2",
-  "“Let all your things be done with charity.” — 1 Corinthians 16:14",
-  "“Be ye kind one to another, tenderhearted, forgiving one another.” — Ephesians 4:32",
-  "“Now faith is the substance of things hoped for, the evidence of things not seen.” — Hebrews 11:1",
-  "“And we know that all things work together for good to them that love God.” — Romans 8:28",
-  "“Be not conformed to this world: but be ye transformed by the renewing of your mind.” — Romans 12:2",
-  "“Gratitude is not only the greatest of virtues, but the parent of all the others.” — Cicero",
-  "“Gratitude is the memory of the heart.” — Jean-Baptiste Massieu",
-  "“Gratitude unlocks the fullness of life. It turns what we have into enough, and more.” — Melody Beattie",
-  "“Do not spoil what you have by desiring what you have not; remember that what you now have was once among the things you only hoped for.” — Epicurus",
-  "“He is a wise man who does not grieve for the things which he has not, but rejoices for those which he has.” — Epictetus",
-  "“Write it on your heart that every day is the best day in the year.” — Ralph Waldo Emerson",
-  "“Whatever the mind of man can conceive and believe, it can achieve.” — Napoleon Hill",
-  "“A man is literally what he thinks, his character being the complete sum of all his thoughts.” — James Allen",
-  "“Dreamers are the saviours of the world.” — James Allen",
-  "“All that we are is the result of what we have thought.” — The Dhammapada",
-  "“The soul becomes dyed with the colour of its thoughts.” — Marcus Aurelius",
-  "“If one advances confidently in the direction of his dreams… he will meet with a success unexpected in common hours.” — Henry David Thoreau",
-  "“Whether you think you can, or you think you can’t, you’re right.” — Henry Ford",
-  "“First say to yourself what you would be; and then do what you have to do.” — Epictetus",
-  "“Calmness of mind is one of the beautiful jewels of wisdom.” — James Allen",
-  "“We suffer more often in imagination than in reality.” — Seneca",
-  "“Men are disturbed not by things, but by the views which they take of things.” — Epictetus",
-  "“Very little is needed to make a happy life; it is all within yourself, in your way of thinking.” — Marcus Aurelius",
-  "“Hatred does not cease by hatred, but only by love. This is the eternal rule.” — The Dhammapada",
-  "“Knowing others is intelligence; knowing yourself is true wisdom.” — Lao Tzu",
-  "“He who knows that enough is enough will always have enough.” — Lao Tzu",
-  "“Rest is not idleness, and to lie sometimes on the grass under trees on a summer’s day… is by no means a waste of time.” — John Lubbock",
-  "“Almost everything will work again if you unplug it for a few minutes, including you.” — Anne Lamott",
-  "“The journey of a thousand miles begins with one step.” — Lao Tzu",
-  "“Waste no more time arguing about what a good man should be. Be one.” — Marcus Aurelius",
-  "“What stands in the way becomes the way.” — Marcus Aurelius",
-  "“While we are postponing, life speeds by.” — Seneca",
-  "“No man is free who is not master of himself.” — Epictetus",
-  "“Wealth consists not in having great possessions, but in having few wants.” — Epictetus",
-  "“Do what you can, with what you have, where you are.” — Theodore Roosevelt",
-  "“The best way out is always through.” — Robert Frost",
-  "“Our greatest glory is not in never falling, but in rising every time we fall.” — Oliver Goldsmith",
-  "“Knowing is not enough; we must apply. Willing is not enough; we must do.” — Johann Wolfgang von Goethe",
-  "“Life is like riding a bicycle. To keep your balance you must keep moving.” — Albert Einstein",
-  "“I learned that courage was not the absence of fear, but the triumph over it.” — Nelson Mandela",
-  "“Education is the most powerful weapon which you can use to change the world.” — Nelson Mandela",
-  "“Darkness cannot drive out darkness; only light can do that. Hate cannot drive out hate; only love can do that.” — Martin Luther King Jr.",
-  "“The beginning is the most important part of the work.” — Plato",
-  "“Well begun is half done.” — Aristotle",
-  "“Ever tried. Ever failed. No matter. Try again. Fail again. Fail better.” — Samuel Beckett",
-  "“If you want to go fast, go alone. If you want to go far, go together.” — African proverb",
-  "“However long the night, the dawn will break.” — African proverb",
-  "“Fall seven times, stand up eight.” — Japanese proverb",
-  "“The best time to plant a tree was twenty years ago. The second best time is now.” — Proverb"
+  ["Stoicism","“Such as are your habitual thoughts, such also will be the character of your mind.” — Marcus Aurelius, Meditations"],
+  ["Stoicism","“If it is not right, do not do it; if it is not true, do not say it.” — Marcus Aurelius, Meditations"],
+  ["Stoicism","“What stands in the way becomes the way.” — Marcus Aurelius, Meditations"],
+  ["Stoicism","“It is not that we have a short space of time, but that we waste much of it.” — Seneca, On the Shortness of Life"],
+  ["Stoicism","“We suffer more often in imagination than in reality.” — Seneca, Letters"],
+  ["Stoicism","“Make the best use of what is in your power, and take the rest as it happens.” — Epictetus"],
+  ["Stoicism","“It is difficulties that show what men are.” — Epictetus, Discourses"],
+  ["Stoicism","“I have learned, in whatsoever state I am, therewith to be content.” — Philippians 4:11"],
+  ["Stoicism","“Take therefore no thought for the morrow: for the morrow shall take thought for the things of itself.” — Matthew 6:34"],
+  ["Self-improvement","“Every action you take is a vote for the type of person you wish to become.” — James Clear, Atomic Habits"],
+  ["Self-improvement","“You do not rise to the level of your goals. You fall to the level of your systems.” — James Clear, Atomic Habits"],
+  ["Self-improvement","“We are what we repeatedly do. Excellence, then, is not an act, but a habit.” — Will Durant, on Aristotle"],
+  ["Self-improvement","“Knowing is not enough; we must apply. Willing is not enough; we must do.” — Johann Wolfgang von Goethe"],
+  ["Self-improvement","“First say to yourself what you would be; and then do what you have to do.” — Epictetus, Discourses"],
+  ["Self-improvement","“Forgetting those things which are behind, and reaching forth unto those things which are before, I press toward the mark.” — Philippians 3:13–14"],
+  ["Self-improvement","“Iron sharpeneth iron; so a man sharpeneth the countenance of his friend.” — Proverbs 27:17"],
+  ["Self-improvement","“And let us not be weary in well doing: for in due season we shall reap, if we faint not.” — Galatians 6:9"],
+  ["People & influence","“Remember that a person’s name is to that person the sweetest and most important sound in any language.” — Dale Carnegie"],
+  ["People & influence","“The only way to get the best of an argument is to avoid it.” — Dale Carnegie"],
+  ["People & influence","“Be a good listener. Encourage others to talk about themselves.” — Dale Carnegie"],
+  ["People & influence","“Seek first to understand, then to be understood.” — Stephen Covey, The 7 Habits of Highly Effective People"],
+  ["People & influence","“Let every man be swift to hear, slow to speak, slow to wrath.” — James 1:19"],
+  ["People & influence","“A soft answer turneth away wrath: but grievous words stir up anger.” — Proverbs 15:1"],
+  ["People & influence","“Let your speech be alway with grace, seasoned with salt.” — Colossians 4:6"],
+  ["People & influence","“A man that hath friends must shew himself friendly.” — Proverbs 18:24"],
+  ["Psychology","“Everything can be taken from a man but one thing: the last of the human freedoms, to choose one’s attitude in any given set of circumstances.” — Viktor Frankl, Man’s Search for Meaning"],
+  ["Psychology","“He who has a why to live can bear almost any how.” — Friedrich Nietzsche"],
+  ["Psychology","“Who looks outside, dreams; who looks inside, awakes.” — Carl Jung"],
+  ["Psychology","“The art of being wise is the art of knowing what to overlook.” — William James, The Principles of Psychology"],
+  ["Psychology","“Nothing in life is as important as you think it is, while you are thinking about it.” — Daniel Kahneman, Thinking, Fast and Slow"],
+  ["Psychology","“For God hath not given us the spirit of fear; but of power, and of love, and of a sound mind.” — 2 Timothy 1:7"],
+  ["Psychology","“Keep thy heart with all diligence; for out of it are the issues of life.” — Proverbs 4:23"],
+  ["Society","“If men define situations as real, they are real in their consequences.” — W. I. Thomas, sociologist"],
+  ["Society","“Neither the life of an individual nor the history of a society can be understood without understanding both.” — C. Wright Mills, The Sociological Imagination"],
+  ["Society","“If you want to go fast, go alone. If you want to go far, go together.” — African proverb"],
+  ["Society","“Two are better than one; because they have a good reward for their labour.” — Ecclesiastes 4:9"],
+  ["Wealth & work","“It is not from the benevolence of the butcher, the brewer, or the baker that we expect our dinner, but from their regard to their own interest.” — Adam Smith, The Wealth of Nations"],
+  ["Wealth & work","“Price is what you pay. Value is what you get.” — Warren Buffett"],
+  ["Wealth & work","“Someone’s sitting in the shade today because someone planted a tree a long time ago.” — Warren Buffett"],
+  ["Wealth & work","“Remember that time is money.” — Benjamin Franklin, Advice to a Young Tradesman"],
+  ["Wealth & work","“Wealth consists not in having great possessions, but in having few wants.” — Epictetus"],
+  ["Wealth & work","“The thoughts of the diligent tend only to plenteousness.” — Proverbs 21:5"],
+  ["Wealth & work","“Seest thou a man diligent in his business? he shall stand before kings.” — Proverbs 22:29"],
+  ["Wealth & work","“Thou shalt remember the LORD thy God: for it is he that giveth thee power to get wealth.” — Deuteronomy 8:18"],
+  ["Belonging","“Not everything that is faced can be changed, but nothing can be changed until it is faced.” — James Baldwin"],
+  ["Belonging","“You may not control all the events that happen to you, but you can decide not to be reduced by them.” — Maya Angelou, Letter to My Daughter"],
+  ["Belonging","“Success is to be measured not so much by the position that one has reached in life as by the obstacles which he has overcome.” — Booker T. Washington, Up from Slavery"],
+  ["Belonging","“If there is no struggle, there is no progress.” — Frederick Douglass"],
+  ["Belonging","“Until the lions have their own historians, the history of the hunt will always glorify the hunter.” — African proverb, often quoted by Chinua Achebe"],
+  ["Belonging","“Be not afraid of greatness: some are born great, some achieve greatness, and some have greatness thrust upon them.” — William Shakespeare, Twelfth Night"],
+  ["Belonging","“I will praise thee; for I am fearfully and wonderfully made.” — Psalm 139:14"],
+  ["Belonging","“Who knoweth whether thou art come to the kingdom for such a time as this?” — Esther 4:14"],
+  ["Belonging","“Be not conformed to this world: but be ye transformed by the renewing of your mind.” — Romans 12:2"],
+  ["Energy & stillness","“Nothing rests; everything moves; everything vibrates.” — The Kybalion"],
+  ["Energy & stillness","“As above, so below; as below, so above.” — The Kybalion"],
+  ["Energy & stillness","“If you want to find the secrets of the universe, think in terms of energy, frequency and vibration.” — Attributed to Nikola Tesla"],
+  ["Energy & stillness","“In quietness and in confidence shall be your strength.” — Isaiah 30:15"],
+  ["Energy & stillness","“And after the fire a still small voice.” — 1 Kings 19:12"],
+  ["Energy & stillness","“Be still, and know that I am God.” — Psalm 46:10"],
+  ["Energy & stillness","“Write the vision, and make it plain upon tables, that he may run that readeth it.” — Habakkuk 2:2"],
+  ["Energy & stillness","“Thou shalt also decree a thing, and it shall be established unto thee.” — Job 22:28"],
+  ["Energy & stillness","“What things soever ye desire, when ye pray, believe that ye receive them, and ye shall have them.” — Mark 11:24"],
+  ["Yoga","“Yoga is the stilling of the fluctuations of the mind.” — Patanjali, Yoga Sutras 1.2"],
+  ["Yoga","“Posture should be steady and comfortable.” — Patanjali, Yoga Sutras 2.46"],
+  ["Yoga","“Yoga teaches us to cure what need not be endured and endure what cannot be cured.” — B. K. S. Iyengar, Light on Yoga"],
+  ["Yoga","“You have a right to your actions, but never to the fruits of your actions.” — Bhagavad Gita 2.47"],
+  ["Mindfulness","“Feelings come and go like clouds in a windy sky. Conscious breathing is my anchor.” — Thich Nhat Hanh"],
+  ["Mindfulness","“You can’t stop the waves, but you can learn to surf.” — Jon Kabat-Zinn"],
+  ["Mindfulness","“Almost everything will work again if you unplug it for a few minutes, including you.” — Anne Lamott"],
+  ["Mindfulness","“Rest is not idleness, and to lie sometimes on the grass under trees on a summer’s day… is by no means a waste of time.” — John Lubbock"],
+  ["Mindfulness","“A merry heart doeth good like a medicine.” — Proverbs 17:22"],
+  ["Mindfulness","“Beloved, I wish above all things that thou mayest prosper and be in health, even as thy soul prospereth.” — 3 John 1:2"],
+  ["Mindfulness","“Come unto me, all ye that labour and are heavy laden, and I will give you rest.” — Matthew 11:28"],
+  ["Gratitude","“Gratitude is not only the greatest of virtues, but the parent of all the others.” — Cicero"],
+  ["Gratitude","“Do not spoil what you have by desiring what you have not; remember that what you now have was once among the things you only hoped for.” — Epicurus"],
+  ["Gratitude","“In every thing give thanks: for this is the will of God in Christ Jesus concerning you.” — 1 Thessalonians 5:18"],
+  ["Gratitude","“This is the day which the LORD hath made; we will rejoice and be glad in it.” — Psalm 118:24"]
 ];
 
 function quoteOfDay_(now) {
   if (!ALERT_QUOTES.length) return '';
-  var day = Math.floor((now.getTime() + 3600000) / 86400000);
-  return ALERT_QUOTES[day % ALERT_QUOTES.length];
+  var day = Math.floor((now.getTime() + 3600000) / 86400000), themes = [];
+  ALERT_QUOTES.forEach(function (q) { if (themes.indexOf(q[0]) < 0) themes.push(q[0]); });
+  var k = themes[day % themes.length], pool = ALERT_QUOTES.filter(function (q) { return q[0] === k; });
+  return k + ': ' + pool[Math.floor(day / themes.length) % pool.length][1];
 }
 
 /** Run once with your app's web address so tapping an alert opens the app. */
@@ -1126,6 +1124,24 @@ function parseWhen_(v, now) {
   return new Date(t).toISOString();
 }
 
+/** One line of thanks a day (or more). Private unless the person shares that entry. */
+function handleGratitude_(person, body, now) {
+  var op = String(body.op || '');
+  if (op === 'add') {
+    var text = String(body.text || '').trim().slice(0, 300);
+    if (!text) return { ok: false, error: 'empty' };
+    var id = 'gr_' + uid_();
+    appendRow_('Gratitude', { id: id, person: person, day: londonDay_(now), text: text, shared: body.shared ? '1' : '', created: now.toISOString() });
+    return { ok: true, id: id, day: londonDay_(now) };
+  }
+  var g = rows_('Gratitude').filter(function (x) { return x.id === String(body.id || ''); })[0];
+  if (!g || g.person !== person) return { ok: false, error: 'not_found' };
+  if (op === 'share') updateRow_('Gratitude', 'id', g.id, { shared: body.shared ? '1' : '' });
+  else if (op === 'delete') updateRow_('Gratitude', 'id', g.id, { person: '', text: '', shared: '' });
+  else return { ok: false, error: 'bad_action' };
+  return { ok: true, id: g.id };
+}
+function noteLevel_(v) { return ['gentle', 'important'].indexOf(String(v)) > -1 ? String(v) : 'normal'; }
 function handleNote_(person, body, now) {
   var op = String(body.op || '');
   if (op === 'add') {
@@ -1133,7 +1149,7 @@ function handleNote_(person, body, now) {
     if (!text) return { ok: false, error: 'empty' };
     var id = 'note_' + uid_();
     var at = parseWhen_(body.remindAt, now);
-    appendRow_('Notes', { id: id, person: person, text: text, created: now.toISOString(), remindAt: at, status: 'open', sentAt: '', doneAt: '' });
+    appendRow_('Notes', { id: id, person: person, text: text, created: now.toISOString(), remindAt: at, status: 'open', sentAt: '', doneAt: '', level: noteLevel_(body.level), headsAt: '' });
     return { ok: true, id: id, remindAt: at };
   }
   var note = rows_('Notes').filter(function (n) { return n.id === String(body.id || ''); })[0];
@@ -1142,7 +1158,12 @@ function handleNote_(person, body, now) {
   if (op === 'done') patch = { status: 'done', doneAt: now.toISOString() };
   else if (op === 'undo') patch = { status: 'open', doneAt: '' };
   else if (op === 'snooze') patch = { remindAt: parseWhen_(body.remindAt, now), sentAt: '', status: 'open' };
-  else if (op === 'edit') { var t2 = String(body.text || '').trim().slice(0, 500); if (!t2) return { ok: false, error: 'empty' }; patch = { text: t2 }; }
+  else if (op === 'edit') {
+    patch = {};
+    if ('text' in body) { var t2 = String(body.text || '').trim().slice(0, 500); if (!t2) return { ok: false, error: 'empty' }; patch.text = t2; }
+    if ('remindAt' in body) { patch.remindAt = parseWhen_(body.remindAt, now); patch.sentAt = ''; patch.headsAt = ''; }
+    if ('level' in body) patch.level = noteLevel_(body.level);
+  }
   else if (op === 'delete') patch = { status: 'deleted' };
   else return { ok: false, error: 'bad_action' };
   updateRow_('Notes', 'id', note.id, patch);
@@ -1232,6 +1253,20 @@ function stillOpen_(person, now) {
     .forEach(function (r) { out.push(r.title); });
   return out;
 }
+/** What's left of today, soonest first, with times. Gentle jots and untimed things come last. */
+function dayAhead_(person, now) {
+  var today = londonDay_(now), out = [];
+  rows_('Notes').filter(function (n) { return n.person === person && n.status === 'open' && n.remindAt && dayOf_(n.remindAt) === today && Date.parse(n.remindAt) >= now.getTime() - 3600000; })
+    .forEach(function (n) { out.push({ t: Date.parse(n.remindAt), label: n.text + ' at ' + Utilities.formatDate(new Date(Date.parse(n.remindAt)), 'Europe/London', 'HH:mm'), gentle: n.level === 'gentle' }); });
+  rows_('Items').filter(function (r) { return canSee_(person, r.person) && r.status === 'open' && r.module === 'plan' && r.due && dayOf_(r.due) === today; })
+    .forEach(function (r) { out.push({ t: Date.parse(r.due), label: r.title + ' at ' + Utilities.formatDate(new Date(Date.parse(r.due)), 'Europe/London', 'HH:mm') }); });
+  return out.sort(function (a, b) { return (a.gentle ? 1 : 0) - (b.gentle ? 1 : 0) || a.t - b.t; });
+}
+function overdue_(person, now) {
+  var today = londonDay_(now);
+  return rows_('Notes').filter(function (n) { return n.person === person && n.status === 'open' && n.level !== 'gentle' && n.remindAt && dayOf_(n.remindAt) === today && Date.parse(n.remindAt) < now.getTime(); })
+    .map(function (n) { return n.text; });
+}
 function comingUp_(person, now, days) {
   var from = londonDay_(new Date(now.getTime() + 86400000)), to = londonDay_(new Date(now.getTime() + days * 86400000)), out = [];
   rows_('Items').filter(function (r) { return canSee_(person, r.person) && r.status === 'open' && r.module === 'plan' && r.due && dayOf_(r.due) >= from && dayOf_(r.due) <= to; })
@@ -1286,8 +1321,16 @@ function runTick_(now) {
   var meta = metaMap_(), day = londonDay_(now), hour = londonHour_(now);
   // Your own reminders always come, but wait until quiet hours end.
   rows_('Notes').forEach(function (n) {
-    if (n.status === 'open' && n.remindAt && !n.sentAt && Date.parse(n.remindAt) <= now.getTime() && !inQuiet_(meta, n.person, hour)) {
-      push_(n.person, 'Reminder', n.text);
+    if (n.status !== 'open' || !n.remindAt || n.sentAt || inQuiet_(meta, n.person, hour)) return;
+    var due = Date.parse(n.remindAt);
+    // Important things get one heads-up 30 minutes before; gentle ones never buzz, they just wait on the list.
+    if ((n.level || 'normal') === 'important' && !n.headsAt && due > now.getTime() && due - now.getTime() <= 30 * 60000) {
+      push_(n.person, 'Coming up at ' + Utilities.formatDate(new Date(due), 'Europe/London', 'HH:mm'), n.text);
+      updateRow_('Notes', 'id', n.id, { headsAt: now.toISOString() });
+      return;
+    }
+    if (due <= now.getTime()) {
+      if ((n.level || 'normal') !== 'gentle') push_(n.person, (n.level === 'important' ? 'Now: ' : 'Reminder') + (n.level === 'important' ? n.text.slice(0, 50) : ''), n.text);
       updateRow_('Notes', 'id', n.id, { sentAt: now.toISOString() });
     }
   });
@@ -1303,8 +1346,10 @@ function runTick_(now) {
     if (inQuiet_(meta, p, hour) || paused_(meta, p, day)) return;
     function once(k, fn) { if (meta[k + '_' + p] === day) return; fn(); meta[k + '_' + p] = day; setMeta_(k + '_' + p, day); }
     if (hour >= 8 && hour < 11 && alertOn_(meta, p, 'morning')) once('morning', function () {
-      var plan = planToday_(p, now), q = quoteOfDay_(now);
-      push_(p, 'Your plan for today', (plan.length ? plan.map(function (x, i) { return (i + 1) + '. ' + x; }).join('\n') : 'Nothing urgent today. Jot anything new with + in Family EA.') + (q ? '\n\n' + q : ''));
+      var up = dayAhead_(p, now), q = quoteOfDay_(now), msg;
+      if (!up.length) msg = 'A clear day so far. Jot anything new with + in Family EA.';
+      else msg = 'First up: ' + up[0].label + (up.length > 1 ? '\nThen: ' + up[1].label : '') + (up.length > 2 ? '\n+' + (up.length - 2) + ' more today, each reminds you at its time.' : '');
+      push_(p, 'Your day', msg + (q ? '\n\n' + q : ''));
     });
     if (hour >= 15 && hour < 17 && alertOn_(meta, p, 'water')) once('waterNudge', function () {
       var w = null; try { w = JSON.parse(meta['water_' + p] || 'null'); } catch (e) { w = null; }
@@ -1314,8 +1359,8 @@ function runTick_(now) {
       gentle_(meta, p, day, 'Water check', n + ' of ' + goal + ' glasses so far today. Time for one?' + (w.game && w.game !== 'off' ? ' Your next glass unlocks a ' + (w.game === 'french' ? 'French challenge' : 'puzzle') + '.' : ''));
     });
     if (hour >= 17 && hour < 19 && alertOn_(meta, p, 'open5')) once('open5', function () {
-      var list = stillOpen_(p, now);
-      if (list.length) gentle_(meta, p, day, 'Still open today', bullets_(list, 3) + '\nTick them off or move them to tomorrow.');
+      var list = overdue_(p, now);
+      if (list.length) gentle_(meta, p, day, list.length === 1 ? 'Still to do' : 'Still to do today', bullets_(list, 2) + '\nTick it off or move it to later.');
     });
     if (hour >= 18 && hour < 21 && Utilities.formatDate(now, 'Europe/London', 'u') === '7' && alertOn_(meta, p, 'week')) once('week', function () {
       var list = comingUp_(p, now, 7);
@@ -1323,7 +1368,7 @@ function runTick_(now) {
     });
     if (hour >= 20 && hour < 23 && alertOn_(meta, p, 'evening')) once('evening', function () {
       var n = doneToday_(p, now), tomorrow = comingUp_(p, now, 1);
-      push_(p, 'Evening check', (n ? 'Done today: ' + n + '. ' : '') + (tomorrow.length ? 'Tomorrow: ' + tomorrow.slice(0, 3).join('; ') + (tomorrow.length > 3 ? '; +' + (tomorrow.length - 3) + ' more' : '') + '. ' : '') + 'Anything to jot down? Tap + in Family EA.');
+      push_(p, 'What are you grateful for today?', 'One line is enough.' + (n ? ' You got ' + n + ' thing' + (n === 1 ? '' : 's') + ' done today.' : '') + (tomorrow.length ? ' Tomorrow starts with: ' + tomorrow[0] + '.' : ''));
     });
   });
 }
@@ -1340,14 +1385,19 @@ function ss_() {
     ss = SpreadsheetApp.create(CFG.SHEET_NAME);
     props.setProperty('SHEET_ID', ss.getId());
   }
+  var schemaV = '2', migrate = props.getProperty('SCHEMA_V') !== schemaV;
   Object.keys(TABLES).forEach(function (name) {
     var sh = ss.getSheetByName(name);
     if (!sh) {
       sh = ss.insertSheet(name);
       sh.appendRow(TABLES[name]);
       sh.setFrozenRows(1);
+    } else if (migrate) {
+      var head = (sh.getDataRange().getValues()[0] || []);
+      if (head.length < TABLES[name].length) sh.getRange(1, 1, 1, TABLES[name].length).setValues([TABLES[name]]); // new columns get their names
     }
   });
+  if (migrate) props.setProperty('SCHEMA_V', schemaV);
   SS_CACHE_ = ss;
   return ss;
 }
