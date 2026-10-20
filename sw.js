@@ -1,5 +1,5 @@
 /* Offline shell and phone alerts for Family EA. Your data is never cached here, only the app's own files. */
-var CACHE = 'fea-shell-v1.7.0';
+var CACHE = 'fea-shell-v1.7.1';
 var SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'demo.js', 'quotes.js', 'games.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {

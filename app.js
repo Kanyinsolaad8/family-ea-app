@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.7.0';
+  var VERSION = '1.7.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -485,6 +485,10 @@
     var t = agClean(raw), lo = t.toLowerCase(), at, m, n;
     if (!t) return false;
     if (/^(help|what can you do|how do i use (this|you)|commands)\b/.test(lo)) { agSay(raw, agHelp()); return true; }
+
+    // wins
+    m = t.match(/^(?:add\s+(?:to\s+)?(?:my\s+|our\s+)?wins?|win|a win)\s*[:\-]?\s+(.+)$/i) || t.match(/^add\s+(.+?)\s+to\s+(?:my\s+|our\s+|the\s+)?wins$/i);
+    if (m) { addWin(agCap(m[1])); agSay(raw, 'Added to your wins: ' + agCap(m[1]) + '. ' + otherName() + ' will see it too.'); return true; }
 
     // shopping list
     m = t.match(/^(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?$/i) || t.match(/^(?:we need|we're out of|we are out of|buy|get)\s+(?:some\s+|more\s+)?(.+?)(?:\s+from the shop(?:s)?)?$/i) ||
@@ -1099,7 +1103,7 @@
     var show = recap || S.winsOpen ? list : list.slice(0, 2);
     if (show.length) h += '<ul class="winlist">' + show.map(function (w) { return '<li><span>' + esc(w.text) + '</span><span class="frombadge">' + (w.from ? esc(PEOPLE[w.from] || w.from) : 'You') + '</span></li>'; }).join('') + '</ul>';
     if (!recap && list.length > 2 && !S.winsOpen) h += '<button class="textbtn" data-act="winsmore">Show all ' + list.length + '</button>';
-    h += '<form class="addrow" id="win-form" autocomplete="off"><label class="sr" for="win-input">Add a win</label><input id="win-input" maxlength="200" enterkeyhint="done" placeholder="A win, big or small"><button class="send" type="submit" aria-label="Add the win">' + svg(I.plus, 20) + '</button></form>';
+    h += '<form class="addrow" id="win-form" autocomplete="off"><label class="sr" for="win-input">Add a win</label><input id="win-input" maxlength="200" enterkeyhint="done" placeholder="A win, big or small"><button class="send" type="submit" aria-label="Add the win">' + svg(I.check, 20) + '</button></form>';
     return h + '</section>';
   }
 
@@ -1151,7 +1155,7 @@
       case 'kindnew': var k2 = Object.assign({}, kv('kind', {})); k2.shift = (+k2.shift || 0) + 1; kvSave('kind', k2); render(); return true;
       case 'ciseen': LS.set('fea.ciSeen', checkinWeek()); render(); return true;
       case 'winsmore': S.winsOpen = true; render(); return true;
-      case 'addwin': var n = noteById(id); if (n) addWin(n.text); return true;
+      case 'addwin': var n = noteById(id); if (n) addWin('Done: ' + n.text.charAt(0).toLowerCase() + n.text.slice(1)); return true;
       case 'phoneaway': LS.set('fea.windDown', todayKey()); render(); toast('Goodnight. Everything is noted for tomorrow.'); return true;
     }
     return false;
@@ -1337,7 +1341,8 @@
     }
     if (d0.more > 0) h += '<button class="textbtn" data-act="tab" data-v="lists">+' + d0.more + ' more on My list</button>';
     if (!next && !need) h += '<div class="allclear" style="background:transparent;padding:4px 0">' + svg(I.check, 20) + 'Nothing planned. Got a thought? Tap + to jot it down.</div>';
-    var tf = new Date().getHours() >= 17 && tomorrowFirst();
+    var nowM = new Date().getHours() * 60 + new Date().getMinutes();
+    var tf = nowM >= 17 * 60 && nowM < 21 * 60 + 30 && tomorrowFirst();
     if (tf) h += '<div class="tomline">' + svg(I.moon, 14) + '<span>Tomorrow starts with <b>' + esc(tf.text) + '</b> at ' + esc(hhmm(new Date(tf.at).toISOString())) + '</span></div>';
     return { html: h + '</section>', shown: shown };
   }
@@ -1405,8 +1410,8 @@
         var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
         if (this.ctx && this.ctx.state === 'closed') this.ctx = null;
         var c = this.ctx = this.ctx || new AC(); if (c.state !== 'running') { var rp = c.resume(); if (rp && rp.catch) rp.catch(function () {}); }
-        var self = this;
-        setTimeout(function () { if (self.ctx === c && c.state !== 'running' && self.nodes) { try { c.close(); } catch (e) {} self.ctx = null; self.nodes = null; self.start(); } }, 800);
+        var self = this, retry = !this.retried; this.retried = true;
+        if (retry) setTimeout(function () { if (self.ctx === c && c.state !== 'running' && self.nodes) { try { c.close(); } catch (e) {} self.ctx = null; self.nodes = null; self.start(); } }, 800);
         var comp = c.createDynamicsCompressor(); comp.connect(c.destination);
         var master = c.createGain(); master.gain.setValueAtTime(0.0001, c.currentTime); master.connect(comp);
         master.gain.exponentialRampToValueAtTime(1, c.currentTime + 1.5);
@@ -1455,7 +1460,7 @@
       } catch (e) {}
     },
     stop: function () {
-      var n = this.nodes, c = this.ctx; this.nodes = null;
+      var n = this.nodes, c = this.ctx; this.nodes = null; this.retried = false;
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
       if (!n || !c) return;
       try {
@@ -1470,7 +1475,7 @@
     return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
       '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
       '<p class="note center" id="bleft">About a minute. Follow the circle.</p>' +
-      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">No sound? Turn the volume up.</span>' : '') + '</div>');
+      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">No sound? Turn the volume up, or flip the silent switch off.</span>' : '') + '</div>');
   }
   function startBreath() {
     var m = calmSlot(); S.breath = { m: m, start: Date.now() };
