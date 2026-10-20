@@ -1074,3 +1074,40 @@ html.rm .fab.fab2{animation:none}
 main{padding-bottom:calc(176px + env(safe-area-inset-bottom))}
 .toast .btn.ghost{border-color:transparent;opacity:.85;padding:0 8px}
 .toast .btn{white-space:nowrap;flex-shrink:0}
+/* v2.2 — jot notes and the quick guide */
+.jnotes textarea{min-height:64px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:10px 12px;font:inherit;font-size:.9375rem;line-height:1.45;resize:vertical;width:100%}
+.jprev{display:flex;align-items:center;gap:4px;font-size:.75rem;color:var(--muted);overflow-wrap:anywhere}
+.jdetail{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;font-size:.9375rem;padding:10px 12px;border-radius:12px;background:var(--surface2)}
+.hhelp{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-family:var(--display);font-weight:700;font-size:1.15rem;display:grid;place-items:center;flex-shrink:0}
+.hbtns{display:flex;gap:8px;align-items:center;flex-shrink:0}
+.tcard{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding:18px 8px 6px;animation:tIn .4s var(--spring) both}
+@keyframes tIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+.ticon{width:64px;height:64px;border-radius:22px;background:var(--oliveSoft);color:var(--olive);display:grid;place-items:center}
+.ticon svg{width:28px;height:28px}
+.ticon.sm{width:36px;height:36px;border-radius:12px;flex-shrink:0}.ticon.sm svg{width:18px;height:18px}
+.ttitle{margin:0;font-family:var(--display);font-size:1.4rem;font-weight:600;text-wrap:balance}
+.ttext{margin:0;font-size:1rem;line-height:1.55;max-width:34ch;color:var(--ink)}
+.tdots{display:flex;justify-content:center;gap:6px}
+.tdots i{width:7px;height:7px;border-radius:4px;background:var(--line);transition:width .25s var(--spring),background-color .25s}
+.tdots i.on{width:18px;background:var(--olive)}
+.gsecs{display:flex;flex-direction:column;gap:8px}
+.gsec{border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}
+.gsh{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:10px 14px;border:0;background:transparent;color:var(--ink);text-align:left;font:inherit}
+.gsh b{flex:1;min-width:0;font-size:.98rem}
+.gsh svg:last-child{color:var(--muted);transition:transform .25s var(--spring)}
+.gsec.on .gsh svg:last-child{transform:rotate(90deg)}
+.gtips{margin:0;padding:0 16px 14px 34px;display:flex;flex-direction:column;gap:8px;font-size:.9375rem;line-height:1.5}
+html.rm .tcard{animation:none}
+@media (prefers-reduced-motion:reduce){.tcard{animation:none}}
+html.s-xl header.top h1{font-size:min(1.4rem,5.6vw)}
+textarea{font:inherit}
+.sheet .row-between > .textbtn[data-act="tourend"]{min-height:44px;min-width:44px}
+/* v2.2 — water as a bottle */
+.bottle{display:flex;flex-direction:column;align-items:center;flex:1;min-height:0;margin-top:4px}
+.bcap{width:14px;height:6px;border-radius:3px;background:var(--sky);flex-shrink:0}
+.bneck{width:12px;height:7px;border-left:2.5px solid var(--sky);border-right:2.5px solid var(--sky);flex-shrink:0}
+.bottle .glass{margin-top:0;width:34px;border:2.5px solid var(--sky);border-radius:13px 13px 11px 11px;min-height:48px;max-height:74px}
+.bottle .glass::after{content:"";position:absolute;left:5px;top:8px;width:3px;height:40%;border-radius:2px;background:rgba(255,255,255,.55);z-index:1}
+html.s-xl .water2 .bottle{flex:none;margin-top:0}
+html.s-xl .water2 .bottle .glass{flex:none;height:38px;min-height:0;width:28px}
+.drop.full{color:var(--sky)}.drop.full svg{fill:var(--skySoft)}

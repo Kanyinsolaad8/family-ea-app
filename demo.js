@@ -172,7 +172,7 @@
             if (!String(body.text || '').trim()) return { ok: false, error: 'empty' };
             var nid = 'n' + Date.now();
             var onCal = !!(body.calendar && body.remindAt);
-            store.notes.push({ id: nid, text: String(body.text).trim(), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open', level: body.level || 'normal', shared: !!body.shared, onCalendar: onCal });
+            store.notes.push({ id: nid, text: String(body.text).trim(), detail: String(body.detail || '').slice(0, 2000), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open', level: body.level || 'normal', shared: !!body.shared, onCalendar: onCal });
             return { ok: true, id: nid, remindAt: body.remindAt || '', calendar: body.calendar ? onCal : undefined, calendarError: body.calendar && !onCal ? 'needs_time' : undefined };
           }
           var n = store.notes.filter(function (x) { return x.id === body.id; })[0];
@@ -182,6 +182,7 @@
           if (body.op === 'snooze') n.remindAt = body.remindAt;
           if (body.op === 'delete') n.status = 'deleted';
           if (n.from && ['edit', 'delete'].indexOf(body.op) > -1) return { ok: false, error: 'owner_only' };
+          if (body.op === 'edit' && 'detail' in body) n.detail = String(body.detail || '').slice(0, 2000);
           if (body.op === 'edit') { if ('text' in body) n.text = String(body.text).trim(); if ('remindAt' in body) n.remindAt = body.remindAt || ''; if ('level' in body) n.level = body.level; if ('shared' in body) n.shared = !!body.shared; if ('calendar' in body) n.onCalendar = !!body.calendar && !!n.remindAt; }
           return { ok: true, id: n.id };
         }
