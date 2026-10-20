@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.1.2';
+  var VERSION = '2.1.3';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -1748,7 +1748,7 @@
         }
         var pr = this.silent.play(); if (pr && pr.catch) pr.catch(function () {});
       } catch (e) {}
-      try { if (window.speechSynthesis) { var u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch (e) {}
+      try { if (window.speechSynthesis) { this.loadVoices(); var u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch (e) {}
     },
     start: function () {
       if (!this.on() || this.nodes) return;
@@ -1779,8 +1779,18 @@
       } catch (e) { this.nodes = null; }
     },
     // A gentle, feminine voice where the phone has one (British first), a little slower and softer.
+    // iPhone loads its voices a moment after the page opens; keep the list once it arrives.
+    loadVoices: function () {
+      var self = this;
+      try {
+        if (!window.speechSynthesis) return [];
+        var v = window.speechSynthesis.getVoices() || []; if (v.length) self.voices = v;
+        if (!self.hooked) { self.hooked = true; window.speechSynthesis.addEventListener ? window.speechSynthesis.addEventListener('voiceschanged', function () { self.voices = window.speechSynthesis.getVoices() || []; }) : (window.speechSynthesis.onvoiceschanged = function () { self.voices = window.speechSynthesis.getVoices() || []; }); }
+      } catch (e) {}
+      return self.voices || [];
+    },
     voice: function () {
-      var all = []; try { all = window.speechSynthesis.getVoices() || []; } catch (e) {}
+      var all = this.loadVoices();
       var en = all.filter(function (x) { return /^en/i.test(x.lang); });
       var fem = /(serena|kate|martha|stephanie|fiona|moira|karen|samantha|tessa|victoria|susan|allison|ava|zoe|libby|sonia|hazel|female)/i, male = /(daniel|arthur|oliver|male|george|rishi|aaron|fred|alex\b|tom\b|gordon|lee\b|ryan)/i;
       var pick = function (list) { return list.filter(function (x) { return fem.test(x.name) && !/male/i.test(x.name.replace(/female/i, '')); })[0]; };
@@ -1791,7 +1801,10 @@
       try {
         if (!window.speechSynthesis) return;
         if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
-        var u = new SpeechSynthesisUtterance(text), v = this.voice();
+        var v = this.voice(), self = this;
+        // No voices yet: wait a moment for them rather than fall back to the phone's default (often a man's voice).
+        if (!v && !this.waited) { this.waited = true; setTimeout(function () { self.say(text); }, 700); return; }
+        var u = new SpeechSynthesisUtterance(text);
         u.lang = v ? v.lang : 'en-GB'; if (v) u.voice = v;
         u.rate = 0.8; u.pitch = v ? 1.05 : 1.2; u.volume = 0.8;
         window.speechSynthesis.speak(u);
@@ -1808,16 +1821,20 @@
           if (name === 'Breathe in') { f.exponentialRampToValueAtTime(524, t + secs); h.exponentialRampToValueAtTime(1048, t + secs); g.exponentialRampToValueAtTime(0.28, t + secs); }
           else if (name === 'Breathe out') { f.exponentialRampToValueAtTime(348, t + secs); h.exponentialRampToValueAtTime(696, t + secs); g.exponentialRampToValueAtTime(0.06, t + secs); }
           else g.exponentialRampToValueAtTime(0.12, t + 0.6);
-          // a soft chime at each change
-          [528, 1056].forEach(function (hz, k) {
-            var o = c.createOscillator(), og = c.createGain(); o.type = 'sine'; o.frequency.value = hz;
-            og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(k ? 0.05 : 0.18, t + 0.02); og.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
-            o.connect(og); og.connect(n.master); o.start(t); o.stop(t + 2.3);
+          // A different soft cue for each part, so you can follow by sound alone:
+          // breathe in = two notes going up, hold = one high bell, breathe out = two notes going down.
+          var notes = name === 'Breathe in' ? [[440, 0], [660, 0.32]] : name === 'Breathe out' ? [[660, 0], [440, 0.32]] : [[880, 0]];
+          notes.forEach(function (nt) {
+            [nt[0], nt[0] * 2].forEach(function (hz, k) {
+              var st = t + nt[1], o = c.createOscillator(), og = c.createGain(); o.type = 'sine'; o.frequency.value = hz;
+              og.gain.setValueAtTime(0.0001, st); og.gain.exponentialRampToValueAtTime(k ? 0.04 : 0.16, st + 0.02); og.gain.exponentialRampToValueAtTime(0.0001, st + 2);
+              o.connect(og); og.connect(n.master); o.start(st); o.stop(st + 2.1);
+            });
           });
         } catch (e) {}
       }
       // The voice speaks only on the first breath; after that the tones and chimes lead.
-      if (speak) this.say(name.toLowerCase() + '\u2026');
+      if (speak) { this.waited = false; this.say(name.toLowerCase() + '\u2026'); }
     },
     stop: function (keepVoice) {
       var n = this.nodes, c = this.ctx; this.nodes = null; this.retried = false;
@@ -1835,7 +1852,7 @@
     return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
       '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
       '<p class="note center" id="bleft">About a minute. Follow the circle.</p>' +
-      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">A gentle voice guides the first breath, then soft tones lead. No sound? Turn the volume up, or flip the silent switch off.</span>' : '') + '</div>');
+      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">A gentle voice guides the first breath. Then follow the sound: two notes up, breathe in; one bell, hold; two notes down, breathe out. No sound? Turn the volume up, or flip the silent switch off.</span>' : '') + '</div>');
   }
   function startBreath() {
     var m = calmSlot(); S.breath = { m: m, start: Date.now() };
