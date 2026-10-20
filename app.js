@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.6.0';
+  var VERSION = '1.6.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -922,7 +922,6 @@
     var titles = { today: greeting() + ', ' + S.name, lists: 'Lists', houses: 'House search', plan: 'Plan ahead', intel: 'Intel & migration', history: 'History', ask: 'Ask your EA' };
     var me = owner(S.person);
     return '<header class="top"><div class="top-row"><div style="min-width:0">' +
-      '<div class="eyebrow"><span class="leaf">' + svg(I.leaf, 14) + '</span>Family EA · ' + esc(dayLabel(new Date().toISOString())) + '</div>' +
       '<h1>' + esc(titles[S.tab] || '') + '</h1></div>' +
       '<div class="hbtns">' +
       '<button class="avatar ' + me.cls + '" data-act="settings" aria-label="Your settings and accessibility">' + esc(me.short) + '<span class="cog">' + svg(I.cog, 12) + '</span></button></div></div>' +
@@ -931,7 +930,7 @@
   function unreadCount() { return S.data.messages.filter(function (m) { return m.from === 'ea' && m.ts > (S.chatSeen || ''); }).length; }
   function syncInner() {
     var dotCls = S.offline ? 'off' : S.syncing ? 'busy' : '';
-    var text = S.offline ? 'Offline · saved copy' : S.syncing ? 'Checking for updates…' : 'Updated ' + (hhmm(S.data.lastSync) || 'just now') + ' · EA next run around ' + nextRun();
+    var text = dayLabel(new Date().toISOString()) + ' · ' + (S.offline ? 'Offline, saved copy' : S.syncing ? 'Checking…' : 'Updated ' + (hhmm(S.data.lastSync) || 'just now'));
     return '<span class="dot ' + dotCls + '"></span><span>' + esc(text) + '</span>' + (S.demo ? '<span class="pill">Demo</span>' : '') + '<button class="link" data-act="refresh">Refresh</button>';
   }
   function paintSync() { var el = document.getElementById('sync'); if (el) el.innerHTML = syncInner(); }
@@ -969,6 +968,9 @@
     var html = [askBar()];
     // Who needs to act: right at the top, and tapping a tile shows its list straight underneath.
     html.push('<section class="tiles compact" aria-label="Who needs to act">' + tiles + '</section>');
+    // A pause before the to-dos: calm and gratitude are always in view when the app opens.
+    html.push(calmCard());
+    html.push(gratitudeCard());
     function whoList(items) {
       return '<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + items.length + '</h2>' +
         (S.who !== 'all' ? '<button class="textbtn" data-act="who" data-v="all">Show all</button>' : '') + '</div>' +
@@ -987,9 +989,6 @@
     // "Your day": what's next, then the rest of today by morning, afternoon and evening.
     var day = yourDay(all);
     html.push(day.html);
-    // Your day, calm and gratitude sit together at the top, so they need little or no scrolling.
-    html.push(calmCard());
-    var gc = gratitudeCard(); if (gc) html.push(gc);
     var qc = quoteCard(); if (qc) html.push(qc);
     html.push(waterCard());
     if (S.who === 'all') html.push(whoList(list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; })));
@@ -1159,25 +1158,46 @@
   var Calm = {
     ctx: null, nodes: null,
     on: function () { return S.prefs.calmSound !== false; },
+    unlock: function () {
+      // iPhone: Web Audio and the voice follow the silent switch unless the page asks for "playback".
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+      try {
+        if (!this.silent) {
+          // older iPhones: a looping silent <audio> started from the tap switches the sound to playback mode
+          var a = this.silent = document.createElement('audio');
+          a.setAttribute('playsinline', ''); a.setAttribute('x-webkit-airplay', 'deny'); a.loop = true; a.preload = 'auto';
+          a.src = 'data:audio/wav;base64,UklGRsQPAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAPAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+        }
+        var pr = this.silent.play(); if (pr && pr.catch) pr.catch(function () {});
+      } catch (e) {}
+      try { if (window.speechSynthesis) { var u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch (e) {}
+    },
     start: function () {
       if (!this.on() || this.nodes) return;
+      this.unlock();
       try {
         var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-        var c = this.ctx = this.ctx || new AC(); if (c.state === 'suspended') c.resume();
-        var master = c.createGain(); master.gain.setValueAtTime(0.0001, c.currentTime); master.connect(c.destination);
-        master.gain.exponentialRampToValueAtTime(0.9, c.currentTime + 2);
+        if (this.ctx && this.ctx.state === 'closed') this.ctx = null;
+        var c = this.ctx = this.ctx || new AC(); if (c.state !== 'running') { var rp = c.resume(); if (rp && rp.catch) rp.catch(function () {}); }
+        var self = this;
+        setTimeout(function () { if (self.ctx === c && c.state !== 'running' && self.nodes) { try { c.close(); } catch (e) {} self.ctx = null; self.nodes = null; self.start(); } }, 800);
+        var comp = c.createDynamicsCompressor(); comp.connect(c.destination);
+        var master = c.createGain(); master.gain.setValueAtTime(0.0001, c.currentTime); master.connect(comp);
+        master.gain.exponentialRampToValueAtTime(1, c.currentTime + 1.5);
         // sea-like wash: soft filtered noise that swells slowly
         var len = c.sampleRate * 4, buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0), last = 0;
         for (var i = 0; i < len; i++) { var w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.2; }
         var noise = c.createBufferSource(); noise.buffer = buf; noise.loop = true;
-        var lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
-        var wash = c.createGain(); wash.gain.value = 0.05;
-        var lfo = c.createOscillator(), lfoGain = c.createGain(); lfo.frequency.value = 0.09; lfoGain.gain.value = 0.03; lfo.connect(lfoGain); lfoGain.connect(wash.gain);
+        var lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+        var wash = c.createGain(); wash.gain.value = 0.12;
+        var lfo = c.createOscillator(), lfoGain = c.createGain(); lfo.frequency.value = 0.09; lfoGain.gain.value = 0.06; lfo.connect(lfoGain); lfoGain.connect(wash.gain);
         noise.connect(lp); lp.connect(wash); wash.connect(master); noise.start(); lfo.start();
         // the breathing tone
-        var tone = c.createOscillator(), toneGain = c.createGain(); tone.type = 'sine'; tone.frequency.value = 174; toneGain.gain.value = 0.0001;
-        tone.connect(toneGain); toneGain.connect(master); tone.start();
-        this.nodes = { master: master, noise: noise, lfo: lfo, tone: tone, toneGain: toneGain };
+        // the breathing tone, an octave up so a phone speaker can play it, with a soft harmonic
+        var tone = c.createOscillator(), toneGain = c.createGain(); tone.type = 'sine'; tone.frequency.value = 348; toneGain.gain.value = 0.0001;
+        var harm = c.createOscillator(), harmGain = c.createGain(); harm.type = 'sine'; harm.frequency.value = 696; harmGain.gain.value = 0.25;
+        tone.connect(toneGain); harm.connect(harmGain); harmGain.connect(toneGain); toneGain.connect(master); tone.start(); harm.start();
+        this.nodes = { master: master, noise: noise, lfo: lfo, tone: tone, harm: harm, toneGain: toneGain };
       } catch (e) { this.nodes = null; }
     },
     phase: function (name, secs) {
@@ -1185,23 +1205,24 @@
       var n = this.nodes, c = this.ctx;
       if (n && c) {
         try {
-          var t = c.currentTime, f = n.tone.frequency, g = n.toneGain.gain;
-          f.cancelScheduledValues(t); g.cancelScheduledValues(t); f.setValueAtTime(f.value, t); g.setValueAtTime(Math.max(0.0001, g.value), t);
-          if (name === 'Breathe in') { f.exponentialRampToValueAtTime(262, t + secs); g.exponentialRampToValueAtTime(0.06, t + secs); }
-          else if (name === 'Breathe out') { f.exponentialRampToValueAtTime(174, t + secs); g.exponentialRampToValueAtTime(0.012, t + secs); }
-          else g.exponentialRampToValueAtTime(0.025, t + 0.6);
+          if (c.state !== 'running') { var rp = c.resume(); if (rp && rp.catch) rp.catch(function () {}); }
+          var t = c.currentTime, f = n.tone.frequency, h = n.harm.frequency, g = n.toneGain.gain;
+          [f, h, g].forEach(function (p) { p.cancelScheduledValues(t); p.setValueAtTime(Math.max(0.0001, p.value), t); });
+          if (name === 'Breathe in') { f.exponentialRampToValueAtTime(524, t + secs); h.exponentialRampToValueAtTime(1048, t + secs); g.exponentialRampToValueAtTime(0.28, t + secs); }
+          else if (name === 'Breathe out') { f.exponentialRampToValueAtTime(348, t + secs); h.exponentialRampToValueAtTime(696, t + secs); g.exponentialRampToValueAtTime(0.06, t + secs); }
+          else g.exponentialRampToValueAtTime(0.12, t + 0.6);
           // a soft chime at each change
           [528, 1056].forEach(function (hz, k) {
             var o = c.createOscillator(), og = c.createGain(); o.type = 'sine'; o.frequency.value = hz;
-            og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(k ? 0.015 : 0.05, t + 0.02); og.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+            og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(k ? 0.05 : 0.18, t + 0.02); og.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
             o.connect(og); og.connect(n.master); o.start(t); o.stop(t + 2.3);
           });
         } catch (e) {}
       }
       try {
         if (window.speechSynthesis) {
-          window.speechSynthesis.cancel();
-          var u = new SpeechSynthesisUtterance(name.toLowerCase()); u.lang = 'en-GB'; u.rate = 0.8; u.pitch = 0.9; u.volume = 0.6;
+          if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+          var u = new SpeechSynthesisUtterance(name.toLowerCase()); u.lang = 'en-GB'; u.rate = 0.85; u.pitch = 0.95; u.volume = 1;
           var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^en-GB/i.test(x.lang); })[0]; if (v) u.voice = v;
           window.speechSynthesis.speak(u);
         }
@@ -1213,7 +1234,7 @@
       if (!n || !c) return;
       try {
         var t = c.currentTime; n.master.gain.cancelScheduledValues(t); n.master.gain.setValueAtTime(Math.max(0.0001, n.master.gain.value), t); n.master.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-        setTimeout(function () { try { n.noise.stop(); n.lfo.stop(); n.tone.stop(); n.master.disconnect(); } catch (e) {} }, 1400);
+        var self = this; setTimeout(function () { try { n.noise.stop(); n.lfo.stop(); n.tone.stop(); n.harm.stop(); n.master.disconnect(); } catch (e) {} try { if (self.silent && !self.nodes) self.silent.pause(); } catch (e) {} }, 1400);
       } catch (e) {}
     }
   };
@@ -1223,12 +1244,12 @@
     return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
       '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
       '<p class="note center" id="bleft">About a minute. Follow the circle.</p>' +
-      '<div class="center"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button></div>');
+      '<div class="center stack" style="gap:2px"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button>' + (Calm.on() ? '<span class="note">No sound? Turn the volume up.</span>' : '') + '</div>');
   }
   function startBreath() {
     var m = calmSlot(); S.breath = { m: m, start: Date.now() };
-    openSheet('breathe');
     Calm.start();
+    openSheet('breathe');
     clearInterval(breathTimer);
     var cycle = m.breath.reduce(function (a, p) { return a + p[1]; }, 0), rounds = Math.max(3, Math.round(60 / cycle)), total = rounds * cycle * 1000, lead = 2000;
     var lastPhase = '';
@@ -1268,26 +1289,28 @@
     'What did you do today that future you will thank you for?', 'Which conversation lifted you?', 'What beauty did you notice: a sky, a face, a word?',
     'What strength did you use today?', 'What are you looking forward to?', 'What went wrong, and what good came from it anyway?', 'Which part of your faith or values carried you today?'
   ];
+  var GRAT_MORNING = ['Who are you glad to wake up near?', 'What about today are you looking forward to?', 'What did you sleep in, eat or wear that you are thankful for?', 'Who could you thank today, and how?', 'What strength will carry you through today?'];
   function gratPrompts() {
-    var out = [], n = S.data.doneToday || 0;
+    var out = new Date().getHours() < 12 ? GRAT_MORNING.slice() : [], n = S.data.doneToday || 0;
     if (n) out.push('You got ' + n + ' thing' + (n === 1 ? '' : 's') + ' done today. Which one are you glad you did?');
     if (glasses() >= waterGoal()) out.push('You looked after your body today. What else felt good?');
     return out.concat(GRAT_PROMPTS);
   }
   function gratPrompt() { var p = gratPrompts(); if (S.grPromptIdx === undefined) S.grPromptIdx = 0; return p[S.grPromptIdx % p.length]; }
+  function gratQuestion() { var hr = new Date().getHours(); return hr < 12 ? 'What are you grateful for this morning?' : hr < 17 ? 'What are you grateful for so far today?' : 'What are you grateful for today?'; }
   function gratitudeForm() {
     var pr = gratPrompt();
-    return '<div class="grprompt"><span>' + svg(I.spark, 14) + esc(pr) + '</span><button class="textbtn" data-act="grprompt" aria-label="Another prompt">' + svg(I.shuffle, 15) + '</button></div>' +
-      '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">What are you grateful for today?</label>' +
-      '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="One line is enough" value="' + esc(S.grText) + '">' +
+    return '<div class="grprompt"><span>' + svg(I.spark, 14) + esc(pr) + '</span><button class="textbtn" data-act="grprompt" aria-label="Another prompt">' + svg(I.shuffle, 18) + '</button></div>' +
+      '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">' + gratQuestion() + '</label>' +
+      '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="' + esc(gratQuestion().replace('What are you grateful for', 'Grateful for')) + '" value="' + esc(S.grText) + '">' +
+      '<button type="button" class="grsh" data-act="grsharenew" aria-pressed="' + !!S.grShare + '" aria-label="' + (S.grShare ? 'Will share with ' + esc(otherName()) + '. Tap to keep it just for you' : 'Just for you. Tap to share with ' + esc(otherName())) + '">' + svg(I.heart, 18) + '</button>' +
       '<button class="send" type="submit" aria-label="Save">' + svg(I.check, 22) + '</button></form>' +
-      '<button class="sharet wide" data-act="grsharenew" aria-pressed="' + !!S.grShare + '">' + svg(I.heart, 14) + (S.grShare ? 'Will share with ' + esc(otherName()) : 'Just for me · tap to share with ' + esc(otherName())) + '</button>';
+      '<span class="grshnote">' + (S.grShare ? 'Will share with ' + esc(otherName()) : 'Just for you · tap the heart to share') + '</span>';
   }
   function gratitudeCard() {
     var mine = (S.data.gratitude || []).filter(function (g) { return !g.from && g.day === todayKey(); });
-    if (new Date().getHours() < 17 && !mine.length) return '';
     return '<section class="card pad stack grat" aria-label="Gratitude"><span class="h2 grh">' + svg(I.heart, 13) + ' Gratitude</span>' +
-      '<b class="gq">What are you grateful for today?</b>' +
+      '<b class="gq sr">' + gratQuestion() + '</b>' +
       (mine.length ? '<ul class="grlist">' + mine.map(grRow).join('') + '</ul>' + (S.grMore ? gratitudeForm() : '<button class="textbtn" data-act="grmore">Add another</button>') : gratitudeForm()) + '</section>';
   }
 

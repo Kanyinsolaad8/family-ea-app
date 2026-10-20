@@ -698,3 +698,23 @@ input,textarea,select{font-size:max(16px,1rem)!important}
 .daymore,.missed-h{min-height:36px}
 .calm{gap:6px}
 .calm .ctext{-webkit-line-clamp:1}
+
+/* v1.6.1: calm and gratitude in view on open */
+.calm .ctext{-webkit-line-clamp:unset;display:block;overflow:visible}
+header.top h1{font-size:1.45rem}
+main{gap:14px}
+.grat{gap:8px;padding-block:14px}
+.grat .gq{font-size:1.02rem}
+.grat .grprompt{font-size:.875rem}
+.grat .sharet.wide{min-height:36px}
+.calm .calmbtns .textbtn,.sync .link{min-height:44px;min-width:44px}
+.grat .gq{font-size:.98rem}
+.grform .grsh{flex-shrink:0;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--muted);display:grid;place-items:center}
+.grform .grsh[aria-pressed="true"]{background:var(--goldSoft);color:var(--gold);border-color:var(--gold)}
+.grshnote{font-size:.78rem;color:var(--muted);margin-top:-2px}
+.grat .grform input{min-height:44px}
+.grat .grform .send{width:44px;height:44px}
+.calm{padding-block:12px}
+.calm .calmbtns .btn{min-height:40px}
+main{gap:12px}
+.grat .grh{display:flex;align-items:center;gap:6px}
