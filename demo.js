@@ -87,7 +87,7 @@
       { id: 'gr4', person: 'itunu', day: dayKey(-1), text: 'Private to Itunu.', shared: false, created: at(-1, 21) }
     ],
     doneToday: 2,
-    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, water: true, open5: true, week: true, reply: true, quiet: '22-7', paused: false },
+    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, water: true, open5: true, week: true, reply: true, mindful: true, quiet: '22-7', paused: false },
     messages: [
       { id: 'd1', ts: new Date(now - 5 * 3600000).toISOString(), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
       { id: 'd2', ts: new Date(now - 3 * 3600000).toISOString(), from: 'me', text: 'Book a viewing for the Yate house next week, after work.', status: 'answered' },
@@ -188,7 +188,7 @@
           if (body.op !== 'clear') store.snoozes.push({ itemId: body.itemId, until: body.until });
           return { ok: true };
         }
-        if (body.type === 'prefs') { ['morning', 'evening', 'water', 'open5', 'week', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
+        if (body.type === 'prefs') { ['morning', 'evening', 'water', 'open5', 'week', 'reply', 'mindful'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
         if (body.type === 'message') {
           var id = 'm' + Date.now();

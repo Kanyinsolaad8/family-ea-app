@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.4.0';
+  var VERSION = '1.5.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -205,6 +205,8 @@
     minus: '<path d="M5 12h14"/>',
     heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+    speaker: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>',
+    wind: '<path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h15a3 3 0 1 1-3 3"/><path d="M3 16h7"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5z"/>'
   };
@@ -765,6 +767,7 @@
     html.push(day.html);
     var gc = gratitudeCard(); if (gc) html.push(gc);
     var qc = quoteCard(); if (qc) html.push(qc);
+    html.push(calmCard());
     html.push(waterCard());
     var rest = list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; });
     html.push('<section class="tiles" aria-label="Who needs to act">' + tiles + '</section>');
@@ -889,6 +892,76 @@
     if (tf) h += '<div class="tomline">' + svg(I.moon, 14) + '<span>Tomorrow starts with <b>' + esc(tf.text) + '</b> at ' + esc(hhmm(new Date(tf.at).toISOString())) + '</span></div>';
     return { html: h + '</section>', shown: shown };
   }
+  /* mindful moments: matches MINDFUL_ in backend/Code.gs */
+  var MINDFUL = [
+    { key: 'Am', at: '08:30', title: 'Morning calm', breath: [['Breathe in', 4], ['Breathe out', 6]], list: [
+      'Three slow breaths: in for 4, out for 6. Then choose one word for how you want today to feel.',
+      'Feet flat on the floor. Notice the ground holding you for 30 seconds before you start.',
+      'Hand on your chest, breathe into it five times. Set one small intention for the morning.',
+      'Look out of a window for a minute. Let your eyes go soft and wide before the screens begin.',
+      'Stretch tall, then let your shoulders drop. One breath in, a longer one out. Begin gently.'] },
+    { key: 'Noon', at: '13:00', title: 'Midday reset', breath: [['Breathe in', 4], ['Hold', 4], ['Breathe out', 4], ['Hold', 4]], list: [
+      'Two sighs: a double breath in through the nose, one long breath out through the mouth. Repeat twice.',
+      'Unclench your jaw, drop your shoulders, soften your hands. Notice what you were holding.',
+      'Box breath: in for 4, hold for 4, out for 4, hold for 4. Four rounds.',
+      'Stand up and walk for two minutes without your phone. Notice your steps.',
+      'Name three things you can hear right now. Then one breath slower than the last.'] },
+    { key: 'Pm', at: '20:30', title: 'Evening wind-down', breath: [['Breathe in', 4], ['Hold', 7], ['Breathe out', 8]], list: [
+      'Breathe in for 4, hold for 7, out for 8. Three rounds to tell your body the day is done.',
+      '5-4-3-2-1: five things you see, four you feel, three you hear, two you smell, one you taste.',
+      'Lower the lights and put the phone face down. Long, slow breaths out for one minute.',
+      'Scan from your head to your feet and let each part soften as you pass it.',
+      'Let go of one thing from today you can’t change. Breathe out as you let it go.'] }
+  ];
+  function calmSlot() { var h = new Date().getHours(); return h >= 5 && h < 12 ? MINDFUL[0] : h >= 12 && h < 17 ? MINDFUL[1] : MINDFUL[2]; }
+  function calmDone() { var c = LS.get('fea.calm', {}); return c[todayKey()] || {}; }
+  function markCalm(key) {
+    var c = LS.get('fea.calm', {}), k = todayKey(), keep = {};
+    c[k] = Object.assign({}, c[k] || {}); c[k][key] = true;
+    Object.keys(c).sort().slice(-60).forEach(function (x) { keep[x] = c[x]; }); LS.set('fea.calm', keep);
+  }
+  function calmCard() {
+    var m = calmSlot(), done = calmDone(), dn = Math.floor((Date.now() + 3600000) / 86400000), text = m.list[dn % m.list.length];
+    var dots = MINDFUL.map(function (x) { return '<span class="cdot' + (done[x.key] ? ' on' : '') + (x === m ? ' cur' : '') + '" title="' + esc(x.title) + '"></span>'; }).join('');
+    var next = MINDFUL[(MINDFUL.indexOf(m) + 1) % MINDFUL.length];
+    return '<section class="card pad stack calm" aria-label="Calm"><div class="row-between"><span class="h2 calmh">' + svg(I.wind, 14) + ' Calm · ' + esc(m.title) + '</span><span class="cdots" aria-label="' + Object.keys(done).length + ' of 3 calm moments today">' + dots + '</span></div>' +
+      (done[m.key] ? '<p class="ctext soft">Done for now. ' + (m !== MINDFUL[2] ? 'Next: ' + esc(next.title.toLowerCase()) + ' at ' + next.at + '.' : 'Rest well.') + '</p>'
+        : '<p class="ctext">' + esc(text) + '</p><div class="btns"><button class="btn small olive" data-act="breathe">' + svg(I.wind, 16) + 'Breathe with me · 1 min</button><button class="btn small" data-act="calmdone">I did it</button></div>') + '</section>';
+  }
+  var breathTimer = null;
+  function breathSheet() {
+    var b = S.breath; if (!b) return '';
+    return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
+      '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
+      '<p class="note center" id="bleft">About a minute. Follow the circle.</p>');
+  }
+  function startBreath() {
+    var m = calmSlot(); S.breath = { m: m, start: Date.now() };
+    openSheet('breathe');
+    clearInterval(breathTimer);
+    var cycle = m.breath.reduce(function (a, p) { return a + p[1]; }, 0), rounds = Math.max(3, Math.round(60 / cycle)), total = rounds * cycle * 1000, lead = 2000;
+    var lastPhase = '';
+    breathTimer = setInterval(function () {
+      if (S.sheet !== 'breathe') { clearInterval(breathTimer); return; }
+      var t = Date.now() - S.breath.start - lead, ph = document.getElementById('bphase'), ct = document.getElementById('bcount'), ci = document.getElementById('bcircle'), lf = document.getElementById('bleft');
+      if (!ph) return;
+      if (t < 0) return;
+      if (t >= total) {
+        clearInterval(breathTimer); markCalm(m.key); ph.textContent = 'Well done'; ct.textContent = ''; ci.className = 'bcircle rest';
+        lf.textContent = 'Notice how you feel now.'; setTimeout(function () { if (S.sheet === 'breathe') { closeSheet(); render(); toast('A calm moment, done.'); } }, 2200); return;
+      }
+      var inCycle = t % (cycle * 1000), acc = 0, p = m.breath[0], left = 0;
+      for (var i = 0; i < m.breath.length; i++) { if (inCycle < (acc + m.breath[i][1]) * 1000) { p = m.breath[i]; left = Math.ceil(((acc + m.breath[i][1]) * 1000 - inCycle) / 1000); break; } acc += m.breath[i][1]; }
+      ct.textContent = left;
+      if (p[0] !== lastPhase || (lastPhase === 'Hold' && ph.textContent !== p[0])) {
+        var prev = lastPhase; lastPhase = p[0]; ph.textContent = p[0];
+        ci.style.transitionDuration = p[1] + 's';
+        ci.className = 'bcircle ' + (p[0] === 'Breathe in' ? 'grow' : p[0] === 'Breathe out' ? 'shrink' : (prev === 'Breathe in' ? 'grow' : 'shrink'));
+      }
+      lf.textContent = Math.ceil((total - t) / 1000) + ' seconds left';
+    }, 200);
+  }
+
   function grRow(g) {
     var mine = !g.from;
     return '<li class="grrow"><span class="t">' + esc(g.text) + '</span>' +
@@ -896,8 +969,25 @@
         '<button class="fx" data-act="grdelete" data-id="' + esc(g.id) + '" aria-label="Delete: ' + esc(g.text) + '">' + svg(I.x, 16) + '</button>'
         : '<span class="frombadge">From ' + esc(PEOPLE[g.from] || g.from) + '</span>') + '</li>';
   }
+  var GRAT_PROMPTS = [
+    'Who made today a little easier?', 'What made you smile, even briefly?', 'What went better than you expected?', 'What did your body let you do today?',
+    'Which small comfort did you enjoy? A drink, a song, the weather?', 'What did you learn today?', 'Who would you like to thank, and for what?',
+    'What is something you have now that you once hoped for?', 'Which moment would you happily live again?', 'What problem is a little smaller than yesterday?',
+    'What about your home are you glad of today?', 'What kindness did you give or receive?', 'What made you feel calm, even for a minute?',
+    'What did you do today that future you will thank you for?', 'Which conversation lifted you?', 'What beauty did you notice: a sky, a face, a word?',
+    'What strength did you use today?', 'What are you looking forward to?', 'What went wrong, and what good came from it anyway?', 'Which part of your faith or values carried you today?'
+  ];
+  function gratPrompts() {
+    var out = [], n = S.data.doneToday || 0;
+    if (n) out.push('You got ' + n + ' thing' + (n === 1 ? '' : 's') + ' done today. Which one are you glad you did?');
+    if (glasses() >= waterGoal()) out.push('You looked after your body today. What else felt good?');
+    return out.concat(GRAT_PROMPTS);
+  }
+  function gratPrompt() { var p = gratPrompts(); if (S.grPromptIdx === undefined) S.grPromptIdx = 0; return p[S.grPromptIdx % p.length]; }
   function gratitudeForm() {
-    return '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">What are you grateful for today?</label>' +
+    var pr = gratPrompt();
+    return '<div class="grprompt"><span>' + svg(I.spark, 14) + esc(pr) + '</span><button class="textbtn" data-act="grprompt" aria-label="Another prompt">' + svg(I.shuffle, 15) + '</button></div>' +
+      '<form class="addrow grform" id="gr-form" autocomplete="off"><label class="sr" for="gr-input">What are you grateful for today?</label>' +
       '<input id="gr-input" maxlength="300" enterkeyhint="done" placeholder="One line is enough" value="' + esc(S.grText) + '">' +
       '<button class="send" type="submit" aria-label="Save">' + svg(I.check, 22) + '</button></form>' +
       '<button class="sharet wide" data-act="grsharenew" aria-pressed="' + !!S.grShare + '">' + svg(I.heart, 14) + (S.grShare ? 'Will share with ' + esc(otherName()) : 'Just for me · tap to share with ' + esc(otherName())) + '</button>';
@@ -926,7 +1016,7 @@
       return '<button class="fchip" data-act="hfilter" data-v="' + f[0] + '" aria-pressed="' + (S.houseFilter === f[0]) + '">' + f[1] + ' · ' + buckets[f[0]].length + '</button>';
     }).join('') + '</div>'];
     var list = buckets[S.houseFilter] || [];
-    if (!list.length) html.push('<div class="empty">' + (S.houseFilter === 'new' ? 'No new matches right now. The next search runs on a weekday at 12:30 and 16:00.' : 'Nothing here yet.') + '</div>');
+    if (!list.length) html.push('<div class="empty">' + (S.houseFilter === 'new' ? 'No new matches right now. Your EA searches every day around 12:30 and 4:30pm.' : 'Nothing here yet.') + '</div>');
     list.forEach(function (i) {
       var x = i.data || {}, st = houseState(i), dec = houseDecision(i), open = !!S.openScore[i.id];
       var rows = (x.rows || []).map(function (r) {
@@ -994,21 +1084,24 @@
   function intel() {
     var mod = S.seg === 'mig' ? 'migration' : 'intel';
     var list = items(mod).sort(function (a, b) { return a.status === 'read' ? 1 : b.status === 'read' ? -1 : String(b.created).localeCompare(String(a.created)); });
-    var html = ['<div class="seg" role="tablist" aria-label="Brief">' + [['mine', 'Yours'], ['mig', 'Migration']].map(function (s) {
-      return '<button role="tab" aria-selected="' + (S.seg === s[0]) + '" data-act="seg" data-v="' + s[0] + '">' + s[1] + '</button>';
+    var unread = function (m) { return items(m).filter(function (i) { return i.status === 'open'; }).length; };
+    var html = ['<div class="seg segstrong" role="tablist" aria-label="Brief">' + [['mine', 'Yours', unread('intel')], ['mig', 'Migration', unread('migration')]].map(function (s) {
+      return '<button role="tab" aria-selected="' + (S.seg === s[0]) + '" data-act="seg" data-v="' + s[0] + '">' + s[1] + (s[2] ? ' <span class="segn">' + s[2] + '</span>' : '') + '</button>';
     }).join('') + '</div>',
     '<div class="note">' + (mod === 'migration' ? 'Sensitive. Shown only in the app, never in phone alerts.' : 'Your briefs, plus anything shared. Itunu’s stay private to her.') + '</div>'];
     if (!list.length) html.push('<div class="empty">Nothing new. Briefs arrive Mon and Thu at 09:00.</div>');
     list.forEach(function (i) {
       var x = i.data || {}, rag = x.rag || 'note', read = i.status === 'read', url = safeUrl(x.url);
-      html.push('<article class="card pad stack" style="gap:8px;opacity:' + (read ? .62 : 1) + ';transition:opacity .3s">' +
-        '<div class="tags"><span class="tag t-' + esc(rag) + '">' + (rag === 'act' ? 'Check' : rag === 'ok' ? 'All clear' : 'FYI') + '</span>' + ochip(i.for) + '<span class="note" style="font-size:.75rem">' + esc(x.source || dayLabel(i.created)) + '</span></div>' +
-        '<b style="font-size:1rem;line-height:1.3">' + esc(i.title) + '</b>' + (i.summary ? '<div style="font-size:.875rem">' + esc(i.summary) + '</div>' : '') +
-        (x.why ? '<div class="note" style="font-size:.8125rem"><b style="color:var(--ink)">Why it matters:</b> ' + esc(x.why) + '</div>' : '') +
-        '<div class="btns" style="margin-top:4px">' + (url ? '<a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">Source ' + svg(I.ext, 14) + '</a>' : '') +
+      var ragLabel = rag === 'act' ? 'Check this' : rag === 'ok' ? 'All clear' : 'For info';
+      html.push('<article class="card pad stack intelc rag-' + esc(rag) + (read ? ' read' : '') + '">' +
+        '<div class="tags"><span class="tag ragtag t-' + esc(rag) + '"><i aria-hidden="true"></i>' + ragLabel + '</span>' + ochip(i.for) + (read ? '<span class="readtag">' + svg(I.check, 13) + 'Read</span>' : '') + '</div>' +
+        '<b class="ititle">' + esc(i.title) + '</b>' + (i.summary ? '<div class="isum">' + esc(i.summary) + '</div>' : '') +
+        (x.why && !read ? '<div class="iwhy"><b>Why it matters</b><span>' + esc(x.why) + '</span></div>' : '') +
+        '<div class="isrc">' + esc(x.source || dayLabel(i.created)) + '</div>' +
+        '<div class="btns" style="margin-top:2px">' + (url ? '<a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">Source ' + svg(I.ext, 14) + '</a>' : '') +
         '<button class="btn" data-act="askabout" data-v="' + esc('Tell me more about: ' + i.title) + '">Ask EA</button>' +
-        '<button class="btn" style="flex:0 0 48px;padding:0" data-act="' + (i.status === 'open' ? 'snoozeitem' : 'attachfor') + '" data-id="' + esc(i.id) + '" aria-label="' + (i.status === 'open' ? 'Remind me later about ' : 'Add a file about ') + esc(i.title) + '">' + svg(i.status === 'open' ? I.snooze : I.clip, 18) + '</button>' +
-        '<button class="btn good" data-act="read" data-id="' + esc(i.id) + '" aria-pressed="' + read + '">' + (read ? svg(I.check, 16) + 'Read' : 'Mark read') + '</button></div></article>');
+        (i.status === 'open' ? '<button class="btn" data-act="snoozeitem" data-id="' + esc(i.id) + '" aria-label="Remind me later about ' + esc(i.title) + '">' + svg(I.snooze, 16) + 'Later</button>' : '') +
+        '<button class="btn ' + (read ? '' : 'good') + '" data-act="read" data-id="' + esc(i.id) + '" aria-pressed="' + read + '">' + (read ? 'Mark unread' : svg(I.check, 16) + 'Mark read') + '</button></div></article>');
     });
     return html;
   }
@@ -1239,12 +1332,19 @@
       '<div class="note center" style="font-size:.75rem">Settings are saved on this phone only · v' + VERSION + '</div></div></div></div>';
   }
 
+  function levelPicker(kind) {
+    var G = window.FEA_GAMES; if (!G || !G.isTrack(kind)) return '';
+    var gs = gameState(kind), max = G.maxLevel[kind], b = '';
+    for (var i = 1; i <= max; i++) b += '<button class="opt" role="radio" aria-checked="' + (gs.level === i) + '" data-act="tracklevel" data-k="' + kind + '" data-v="' + i + '">' + esc(kind === 'french' ? G.label(kind, i) : i + ' \u00b7 ' + G.label(kind, i)) + '</button>';
+    return '<span class="note" style="font-size:.8125rem">' + (kind === 'french' ? 'Your French level now (it grows as you go)' : 'Your data and cloud level now') + '</span><div class="opts ' + (kind === 'french' ? 'opts6' : 'opts2') + '" role="radiogroup">' + b + '</div>';
+  }
   function wellnessSection() {
     var p = S.prefs, g = p.game || ((CFG.GAMES || {})[S.person]) || 'puzzle';
     function o(key, cur, list) { return '<div class="opts" role="radiogroup">' + list.map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (String(cur) === String(x[0])) + '" data-act="pref" data-k="' + key + '" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>'; }
     return '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Wellness</span>' +
       '<span class="note" style="font-size:.8125rem">Daily water goal</span>' + o('waterGoal', p.waterGoal, [['6', '6 glasses'], ['8', '8 glasses'], ['10', '10 glasses']]) +
-      '<span class="note" style="font-size:.8125rem">Each glass unlocks</span>' + o('game', g, [['puzzle', 'Brain puzzle'], ['french', 'French'], ['off', 'Nothing']]) +
+      '<span class="note" style="font-size:.8125rem">Each glass unlocks</span>' + '<div class="opts opts2" role="radiogroup">' + [['mix', 'Puzzles + data & cloud'], ['puzzle', 'Brain puzzles'], ['data', 'Data & cloud'], ['french', 'French A1\u2013C2'], ['off', 'Nothing']].map(function (x) { return '<button class="opt" role="radio" aria-checked="' + (g === x[0]) + '" data-act="pref" data-k="game" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      levelPicker(g === 'mix' ? 'data' : g) +
       '<div class="list"><button class="switch" role="switch" aria-checked="' + !!p.quotes + '" data-act="toggle" data-k="quotes"><span style="flex:1;display:flex;flex-direction:column;gap:2px"><b style="font-size:.9375rem">Quote or verse on Today</b><span class="note" style="font-size:.8125rem">A new one each time you open the app</span></span><span class="track" aria-hidden="true"><i></i></span></button></div></div>';
   }
 
@@ -1269,7 +1369,7 @@
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Your day, 8am', 'What\u2019s first, then a short list, plus a thought') + asw('evening', 'Gratitude, 8pm', 'What are you grateful for? Plus what tomorrow starts with') + '</div></div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Gentle nudges \u00b7 only when useful, at most 3 a day</span><div class="list">' +
       asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still to do, 5pm', 'Only if something due today was missed') +
-      asw('week', 'Week ahead, Sunday 6pm', 'What\u2019s coming up in the next 7 days') + asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
+      asw('mindful', 'Mindful moments, 8:30 \u00b7 1pm \u00b7 8:30pm', 'One short calming practice each, separate from nudges') + asw('week', 'Week ahead, Sunday 6pm', 'What\u2019s coming up in the next 7 days') + asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Quiet hours</span><div class="opts" role="radiogroup">' + [['22-7', '10pm\u20137am'], ['21-8', '9pm\u20138am'], ['off', 'Off']].map(function (q) {
         return '<button class="opt" role="radio" aria-checked="' + ((a.quiet || '22-7') === q[0]) + '" data-act="aquiet" data-v="' + q[0] + '">' + q[1] + '</button>'; }).join('') + '</div>' +
       '<span class="note" style="font-size:.8125rem">Nothing buzzes in quiet hours. Reminders you set wait until they end.</span>' +
@@ -1506,13 +1606,28 @@
   var QUOTES = window.FEA_QUOTES || [];
   var THEMES = []; QUOTES.forEach(function (q) { if (THEMES.indexOf(q.k) < 0) THEMES.push(q.k); });
   function dayNum() { var n = new Date(); return Math.floor(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) / 86400000); }
-  function quoteTheme() { return S.quoteTheme || THEMES[dayNum() % Math.max(1, THEMES.length)]; }
+  // A different theme every time the app opens (never the same one twice in a row), and every tap.
+  // Works through every theme in a shuffled order before any repeats.
+  function freshTheme(avoid) {
+    var st = LS.get('fea.qOrder', null);
+    if (!st || !st.order || st.order.length !== THEMES.length || st.order.some(function (t) { return THEMES.indexOf(t) < 0; }) || st.i >= st.order.length) {
+      var o = THEMES.slice(); for (var i = o.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = o[i]; o[i] = o[j]; o[j] = t; }
+      if (o[0] === avoid && o.length > 1) { o.push(o.shift()); }
+      st = { order: o, i: 0 };
+    }
+    var next = st.order[st.i++]; LS.set('fea.qOrder', st);
+    return next || THEMES[0];
+  }
+  function quoteTheme() {
+    if (!S.quoteTheme && THEMES.length) { S.quoteTheme = freshTheme(LS.get('fea.qTheme', '')); LS.set('fea.qTheme', S.quoteTheme); }
+    return S.quoteTheme;
+  }
   function quotePool() { var k = quoteTheme(); var p = QUOTES.filter(function (q) { return q.k === k; }); return p.length ? p : QUOTES; }
   function quoteCard() {
     if (!S.prefs.quotes || !QUOTES.length) return '';
     var pool = quotePool(), q = pool[S.quoteIdx % pool.length];
-    return '<section class="card pad quote" aria-label="Thought for today"><div class="row-between"><button class="qtheme" data-act="quotetheme" aria-label="Theme: ' + esc(q.k) + '. Tap for another theme">' + svg(I.leaf, 13) + '<span>' + (S.quoteTheme ? '' : 'Today · ') + esc(q.k || 'Thought') + '</span></button>' +
-      '<button class="textbtn" data-act="newquote" aria-label="Another on this theme">' + svg(I.shuffle, 16) + '</button></div>' +
+    return '<section class="card pad quote" aria-label="Thought for today"><div class="row-between"><button class="qtheme" data-act="quotetheme" aria-label="Theme: ' + esc(q.k) + '. Tap for another on this theme">' + svg(I.leaf, 13) + '<span>' + esc(q.k || 'Thought') + '</span></button>' +
+      '<button class="textbtn" data-act="newquote" aria-label="Another quote, on a different theme">' + svg(I.shuffle, 16) + '</button></div>' +
       '<blockquote><p>“' + esc(q.t) + '”</p><footer>' + esc(q.a) + '</footer></blockquote></section>';
   }
   function todayKey() { var n = new Date(); return n.getFullYear() + '-' + pad(n.getMonth() + 1) + '-' + pad(n.getDate()); }
@@ -1528,17 +1643,46 @@
     return n;
   }
   function gameKind() { var g = S.prefs.game || ((CFG.GAMES || {})[S.person]) || 'puzzle'; return g; }
+  // "mix" takes turns: a brain puzzle, then a data and cloud question.
+  function nextKind() {
+    var k = gameKind(); if (k !== 'mix') return k;
+    var flip = !LS.get('fea.mixFlip', false); LS.set('fea.mixFlip', flip);
+    return flip ? 'puzzle' : 'data';
+  }
+  function trackLine(kind) {
+    var G = window.FEA_GAMES, gs = gameState(kind);
+    if (!G.isTrack(kind)) return G.kinds[kind] + ' \u00b7 level ' + gs.level;
+    var goal = G.goal(kind, gs.level), max = G.maxLevel[kind];
+    return G.kinds[kind] + ' \u00b7 ' + G.label(kind, gs.level) + (gs.level < max ? ' \u00b7 ' + (gs.pts || 0) + ' of ' + goal + ' to ' + G.label(kind, gs.level + 1) : ' \u00b7 top level');
+  }
+  function trackBar(kind) {
+    var G = window.FEA_GAMES, gs = gameState(kind); if (!G.isTrack(kind)) return '';
+    var max = G.maxLevel[kind], steps = '';
+    for (var i = 1; i <= max; i++) steps += '<span class="tstep' + (i < gs.level ? ' done' : i === gs.level ? ' now' : '') + '">' + esc(kind === 'french' ? G.label(kind, i) : String(i)) + '</span>';
+    var pct = gs.level >= max ? 100 : Math.round(100 * (gs.pts || 0) / G.goal(kind, gs.level));
+    return '<div class="trackp" aria-label="' + esc(trackLine(kind)) + '"><div class="tsteps">' + steps + '</div><div class="tbar"><i style="width:' + pct + '%"></i></div></div>';
+  }
+  function speakFr(t) {
+    try {
+      if (!t || !window.speechSynthesis) return toast('Your phone can\u2019t read French aloud here.');
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(t); u.lang = 'fr-FR'; u.rate = 0.85;
+      var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^fr/i.test(x.lang); })[0]; if (v) u.voice = v;
+      window.speechSynthesis.speak(u);
+    } catch (e) { toast('Your phone can\u2019t read French aloud here.'); }
+  }
   function gameState(kind) { return LS.get('fea.game.' + kind, { level: 1, run: 0, played: 0, correct: 0, best: 1 }); }
   function waterCard() {
     var goal = waterGoal(), have = glasses(), streak = waterStreak(), kind = gameKind();
     var drops = ''; for (var i = 0; i < goal; i++) drops += '<span class="drop' + (i < have ? ' full' : '') + '" aria-hidden="true">' + svg(I.drop, 18) + '</span>';
-    var gs = kind !== 'off' && window.FEA_GAMES ? gameState(kind) : null;
+    var gs = kind !== 'off' && window.FEA_GAMES ? gameState(kind === 'mix' ? 'data' : kind) : null;
     return '<section class="card pad stack water" aria-label="Water today"><div class="row-between"><b>' + svg(I.drop, 16) + ' Water</b><span class="note" style="font-size:.8125rem">' + (streak ? streak + '-day streak' : 'Start a streak today') + '</span></div>' +
       '<div class="drops" role="img" aria-label="' + have + ' of ' + goal + ' glasses">' + drops + '</div>' +
       '<div class="wrow"><button class="btn small olive" data-act="waterplus">' + svg(I.plus, 16) + 'Add a glass</button>' +
       '<button class="btn small" data-act="waterminus" aria-label="Take one glass off"' + (have ? '' : ' disabled') + '>' + svg(I.minus, 16) + '</button>' +
       '<span class="wcount"><b>' + have + '</b> of ' + goal + ' glasses' + (have >= goal ? ' \u00b7 goal met' : '') + '</span></div>' +
-      (gs ? '<div class="note" style="font-size:.8125rem">Each glass unlocks a quick ' + (kind === 'french' ? 'French challenge' : 'brain puzzle') + ' · level ' + gs.level + '</div>' : '') + '</section>';
+      (gs ? '<div class="note" style="font-size:.8125rem">Each glass unlocks ' + (kind === 'french' ? 'a French challenge' : kind === 'data' ? 'a data and cloud question' : kind === 'mix' ? 'a brain puzzle or a data and cloud question, in turn' : 'a brain puzzle') + '</div>' +
+        (kind === 'mix' ? trackBar('data') : trackBar(kind)) : '') + '</section>';
   }
   var waterTimer;
   function syncWater() {
@@ -1553,7 +1697,7 @@
     LS.set('fea.water', S.water); syncWater();
     if (S.water[k] === goal) toast('Water goal met. Well done!');
     var kind = gameKind();
-    if (kind !== 'off' && window.FEA_GAMES) startChallenge(kind); else render();
+    if (kind !== 'off' && window.FEA_GAMES) startChallenge(nextKind()); else render();
   }
   function startChallenge(kind) {
     var gs = gameState(kind);
@@ -1569,6 +1713,9 @@
     LS.set('fea.game.' + kind, after);
     ch.levelUp = after.level > before.level; ch.levelDown = after.level < before.level; ch.right = right;
     renderOverlay();
+    if (c0say(ch)) speakFr(ch.c.say);
+  }
+  function c0say(ch) { return ch.c.kind === 'french' && ch.c.say && S.prefs.frVoice !== false;
   }
   function challengeSheet() {
     var ch = S.challenge; if (!ch) return '';
@@ -1578,10 +1725,12 @@
       return '<button class="copt' + cls + '" data-act="canswer" data-v="' + esc(o) + '"' + (ch.picked !== null ? ' aria-disabled="true"' : '') + '>' + esc(o) + '</button>';
     }).join('') + '</div>';
     var fb = ch.picked === null ? '' : '<div class="cfb ' + (ch.right ? 'ok' : 'no') + '" role="status"><b>' + (ch.right ? 'Correct!' : 'Not quite.') + '</b> ' + esc(c.why) +
-      (ch.levelUp ? '<br><b>Level up: now level ' + gs.level + '.</b>' : ch.levelDown ? '<br>Back to level ' + gs.level + ' for a moment.' : '') + '</div>';
-    return sheetWrap('Mini challenge', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.drop, 14) + ' Glass ' + have + ' of ' + waterGoal() + ' · ' + esc(window.FEA_GAMES.kinds[kind]) + ' · level ' + c.level + '</span><button class="textbtn" data-act="closesheet">' + (ch.picked === null ? 'Skip' : 'Close') + '</button></div>' +
-      '<h2 class="cq">' + esc(c.q) + '</h2>' + opts + fb +
-      (ch.picked !== null ? '<div class="btns"><button class="btn" data-act="cmore">One more</button><button class="btn primary" data-act="closesheet">Done</button></div><div class="note center" style="font-size:.75rem">' + gs.correct + ' right out of ' + gs.played + ' so far · best level ' + gs.best + '</div>' : ''));
+      (ch.levelUp ? '<br><b>' + (window.FEA_GAMES.isTrack(kind) ? 'You\u2019ve reached ' + esc(window.FEA_GAMES.label(kind, gs.level)) + '. Lovely progress.' : 'Level up: now level ' + gs.level + '.') + '</b>' : ch.levelDown ? '<br>Back to level ' + gs.level + ' for a moment.' : '') + '</div>';
+    var listen = kind === 'french' && c.say ? '<button class="btn small listen" data-act="saysay">' + svg(I.speaker, 16) + (ch.picked === null ? 'Listen' : 'Hear it again') + '</button>' : '';
+    return sheetWrap('Mini challenge', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.drop, 14) + ' Glass ' + have + ' of ' + waterGoal() + ' · ' + esc(trackLine(kind)) + '</span><button class="textbtn" data-act="closesheet">' + (ch.picked === null ? 'Skip' : 'Close') + '</button></div>' +
+      (c.from && c.from !== window.FEA_GAMES.label(kind, c.level) ? '<span class="note review">Quick review from ' + esc(c.from) + '</span>' : '') +
+      '<h2 class="cq">' + esc(c.q) + '</h2>' + (ch.picked === null && kind === 'french' && /« .+ »/.test(c.q) ? listen : '') + opts + fb + (ch.picked !== null ? listen : '') +
+      (ch.picked !== null ? '<div class="btns"><button class="btn" data-act="cmore">One more</button><button class="btn primary" data-act="closesheet">Done</button></div><div class="note center" style="font-size:.75rem">' + gs.correct + ' right out of ' + gs.played + ' so far' + (window.FEA_GAMES.isTrack(kind) ? '' : ' · best level ' + gs.best) + '</div>' + trackBar(kind) : ''));
   }
 
   /* ───────── render ───────── */
@@ -1629,12 +1778,12 @@
   function renderOverlay() {
     if (S.mode !== 'app' || !S.sheet) { overlay.innerHTML = ''; return; }
     var focusId = document.activeElement && overlay.contains(document.activeElement) ? document.activeElement.id : '';
-    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : snoozeSheet();
+    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : snoozeSheet();
     S.sheetFresh = false;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
   function openSheet(name, item) { S.sheet = name; S.sheetItem = item || null; S.sheetFresh = true; S.unlinkAsk = false; renderOverlay(); }
-  function closeSheet() { S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
+  function closeSheet() { if (S.sheet === 'breathe') clearInterval(breathTimer); S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
 
   function toast(text, opts) {
     opts = opts || {};
@@ -1714,12 +1863,14 @@
         item = findItem(id); closeSheet();
         if (item) { if (item.module === 'intel' || item.module === 'migration') { S.seg = item.module === 'migration' ? 'migration' : 'mine'; setTab('intel'); } else setTab({ houses: 'houses', plan: 'plan' }[item.module] || 'today'); }
         break;
-      case 'newquote': var qn = quotePool().length; S.quoteIdx = qn > 1 ? (S.quoteIdx % qn + 1 + Math.floor(Math.random() * (qn - 1))) % qn : 0; render(); break;
-      case 'quotetheme': var ti = THEMES.indexOf(quoteTheme()); S.quoteTheme = THEMES[(ti + 1) % THEMES.length]; S.quoteIdx = Math.floor(Math.random() * 50); render(); break;
+      case 'newquote': S.quoteTheme = freshTheme(quoteTheme()); LS.set('fea.qTheme', S.quoteTheme); S.quoteIdx = Math.floor(Math.random() * 50); render(); break;
+      case 'quotetheme': var qn = quotePool().length; S.quoteIdx = qn > 1 ? (S.quoteIdx % qn + 1 + Math.floor(Math.random() * (qn - 1))) % qn : 0; render(); break;
       case 'waterplus': addGlass(); break;
       case 'waterminus': if (glasses() > 0) { S.water[todayKey()] = glasses() - 1; LS.set('fea.water', S.water); syncWater(); render(); } break;
       case 'canswer': answerChallenge(v); break;
-      case 'cmore': startChallenge(S.challenge ? S.challenge.c.kind : gameKind()); break;
+      case 'cmore': startChallenge(gameKind() === 'mix' ? nextKind() : (S.challenge ? S.challenge.c.kind : gameKind())); break;
+      case 'saysay': if (S.challenge) speakFr(S.challenge.c.say); break;
+      case 'tracklevel': var tk = el.getAttribute('data-k'), tl = +v, ts = gameState(tk); ts.level = tl; ts.pts = 0; ts.run = 0; ts.best = Math.max(ts.best || 1, tl); LS.set('fea.game.' + tk, ts); toast('Starting from ' + window.FEA_GAMES.label(tk, tl) + '.'); renderOverlay(); render(); break;
       case 'settings': checkPush(); openSheet('settings'); var first = overlay.querySelector('.sheet button'); if (first) first.focus({ preventScroll: true }); break;
       case 'closesettings': case 'closesheet': closeSheet(); break;
       case 'jot':
@@ -1733,6 +1884,9 @@
       case 'grsharenew': S.grShare = !S.grShare; var gin = document.getElementById('gr-input'); if (gin) S.grText = gin.value; render(); break;
       case 'grshare': grOp(id, 'share'); break;
       case 'grdelete': grOp(id, 'delete'); break;
+      case 'grprompt': S.grPromptIdx = (S.grPromptIdx || 0) + 1; var gin2 = document.getElementById('gr-input'); if (gin2) S.grText = gin2.value; render(); break;
+      case 'breathe': startBreath(); break;
+      case 'calmdone': markCalm(calmSlot().key); render(); toast('Lovely. One calm moment done.'); break;
       case 'grmore': S.grMore = true; render(); var gi2 = document.getElementById('gr-input'); if (gi2) gi2.focus(); break;
       case 'savejot': saveJot(); break;
       case 'jotgrocery': var jtxt = (document.getElementById('jot-text') || {}).value || ''; if (jtxt.trim()) { closeSheet(); addGrocery(jtxt); S.listSeg = 'groceries'; setTab('lists'); } else toast('Type what you need first.'); break;
@@ -1844,7 +1998,13 @@
     var hashKey = (location.hash.match(/key=([A-Za-z0-9]+)/) || [])[1];
     if (hashKey && !S.key) { S.key = hashKey; LS.set('fea.key', hashKey); }
 
-    if (S.demo || (S.key && CFG.API_URL)) { S.mode = 'loading'; render(); load({ animate: true }).then(checkPush); }
+    // Open instantly: show your last saved copy straight away, then refresh quietly in the background.
+    var saved = !S.demo && S.key && CFG.API_URL && LS.get('fea.cache', null);
+    if (saved && saved.res && saved.res.person) {
+      S.person = saved.res.person; S.name = saved.res.name || PEOPLE[saved.res.person] || 'You';
+      accept(saved.res); S.mode = 'app'; S.firstPaint = false; render(false);
+      load().then(checkPush);
+    } else if (S.demo || (S.key && CFG.API_URL)) { S.mode = 'loading'; render(); load({ animate: true }).then(checkPush); }
     else { S.mode = 'link'; render(true); }
 
     if (window.FEA_DEMO) window.FEA_DEMO.onChange(function () { if (S.demo) load(); });
@@ -1859,6 +2019,12 @@
     window.addEventListener('online', function () { if (S.mode === 'app') load(); });
 
     if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
+    // When an update lands just after opening, swap to it at once (only once, and never mid-task).
+    var openedAt = Date.now();
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) navigator.serviceWorker.addEventListener('controllerchange', function () {
+      var done = false; try { done = sessionStorage.getItem('fea.swapped') === '1'; sessionStorage.setItem('fea.swapped', '1'); } catch (e) {}
+      if (!done && Date.now() - openedAt < 10000 && !S.sheet && !Object.keys(S.pending).length && !(S.draft || '').trim()) location.reload();
+    });
   }
 
   window.FEA_APP = { state: S, version: VERSION }; // handy for checks

@@ -1,5 +1,5 @@
 /* Offline shell and phone alerts for Family EA. Your data is never cached here, only the app's own files. */
-var CACHE = 'fea-shell-v1.4.0';
+var CACHE = 'fea-shell-v1.5.0';
 var SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'demo.js', 'quotes.js', 'games.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
@@ -13,13 +13,13 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // API and fonts go straight to the network
-  // Network first so updates arrive quickly; fall back to the cached shell offline.
-  e.respondWith(fetch(e.request).then(function (res) {
-    var copy = res.clone();
-    caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
-    return res;
-  }).catch(function () {
-    return caches.match(e.request).then(function (hit) { return hit || caches.match('index.html'); });
+  // Cache first so the app opens instantly; fetch a fresh copy in the background for next time.
+  e.respondWith(caches.open(CACHE).then(function (c) {
+    return c.match(e.request, { ignoreSearch: e.request.mode === 'navigate' }).then(function (hit) {
+      var net = fetch(e.request).then(function (res) { if (res && res.ok) c.put(e.request, res.clone()); return res; });
+      if (hit) { net.catch(function () {}); return hit; }
+      return net.catch(function () { return c.match('index.html'); });
+    });
   }));
 });
 
