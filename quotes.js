@@ -45,7 +45,7 @@ window.FEA_QUOTES = [
   // Society
   { k: 'Society', t: 'If men define situations as real, they are real in their consequences.', a: 'W. I. Thomas, sociologist' },
   { k: 'Society', t: 'Neither the life of an individual nor the history of a society can be understood without understanding both.', a: 'C. Wright Mills, The Sociological Imagination' },
-  { k: 'Society', t: 'If you want to go fast, go alone. If you want to go far, go together.', a: 'African proverb' },
+  { k: 'Society', t: 'If you want to go fast, go alone. If you want to go far, go together.', a: 'Often called an African proverb (origin uncertain)' },
   { k: 'Society', t: 'Two are better than one; because they have a good reward for their labour.', a: 'Ecclesiastes 4:9' },
 
   // Wealth and work
@@ -53,7 +53,7 @@ window.FEA_QUOTES = [
   { k: 'Wealth & work', t: 'Price is what you pay. Value is what you get.', a: 'Warren Buffett' },
   { k: 'Wealth & work', t: 'Someone’s sitting in the shade today because someone planted a tree a long time ago.', a: 'Warren Buffett' },
   { k: 'Wealth & work', t: 'Remember that time is money.', a: 'Benjamin Franklin, Advice to a Young Tradesman' },
-  { k: 'Wealth & work', t: 'Wealth consists not in having great possessions, but in having few wants.', a: 'Epictetus' },
+  { k: 'Wealth & work', t: 'Wealth consists not in having great possessions, but in having few wants.', a: 'Attributed to Epictetus' },
   { k: 'Wealth & work', t: 'The thoughts of the diligent tend only to plenteousness.', a: 'Proverbs 21:5' },
   { k: 'Wealth & work', t: 'Seest thou a man diligent in his business? he shall stand before kings.', a: 'Proverbs 22:29' },
   { k: 'Wealth & work', t: 'Thou shalt remember the LORD thy God: for it is he that giveth thee power to get wealth.', a: 'Deuteronomy 8:18' },

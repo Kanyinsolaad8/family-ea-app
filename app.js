@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.5.0';
+  var VERSION = '1.6.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -416,38 +416,233 @@
       : '<span class="file">' + thumb + '<span class="fcol">' + label + '</span></span>';
   }
 
+  /* ───────── Ask EA: an instant helper ─────────
+     Everyday requests are done straight away on the phone (no AI, nothing leaves your data).
+     Anything it can't do, it asks before passing to the EA's next run. */
+  var AG_HANDOFF = {};
+  var STOP = ['the', 'a', 'an', 'to', 'my', 'our', 'for', 'and', 'of', 'on', 'at', 'in', 'it', 'is', 'i', 'me', 'us', 'we', 'about', 'with', 'this', 'that', 'please', 'done', 'have', 'did', 'just', 'off', 'list'];
+  function agClean(t) {
+    return String(t || '').trim().replace(/^(hey|hi|hello|ok|okay|ea)\b[,!\s]*/i, '').replace(/^(please\s+)?(can|could|would|will)\s+you\s+(please\s+)?/i, '')
+      .replace(/^please\s+/i, '').replace(/\s*(please|thanks|thank you)[.!]*$/i, '').replace(/[?.!]+$/, '').trim();
+  }
+  function agCap(t) { t = String(t || '').trim(); return t.charAt(0).toUpperCase() + t.slice(1); }
+  // Takes time words out of a jot so "call mum tomorrow at 3pm" saves as "Call mum".
+  function agStripWhen(t) {
+    return String(t || '').replace(/\b(tomorrow|tmrw|tonight|today|this (morning|afternoon|evening)|next week|in (an|one|1) hour)\b/gi, ' ')
+      .replace(/\b(morning|afternoon|evening)\b(?=\s*$)/gi, ' ')
+      .replace(/\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, ' ')
+      .replace(/\b(at|by)\s+\d{1,2}([:.]\d{2})?\s*(am|pm)?\b/gi, ' ').replace(/\b\d{1,2}([:.]\d{2})?\s*(am|pm)\b/gi, ' ')
+      .replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim().replace(/[,\s]+$/, '');
+  }
+  function agWhen(t) { var g = guessWhen(t); if (!g) return ''; if (g.at) return g.at.toISOString(); var o = whenOptions().filter(function (x) { return x[0] === g.key; })[0]; return o ? o[2].toISOString() : ''; }
+  function agWords(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2 && STOP.indexOf(w) < 0; }); }
+  function agMatch(q) {
+    var ws = agWords(q); if (!ws.length) return [];
+    var qn = String(q || '').toLowerCase().trim();
+    var scored = openNotes().map(function (n) { var t = n.text.toLowerCase(), sc = ws.filter(function (w) { return new RegExp('\\b' + w).test(t); }).length / ws.length; if (t === qn) sc = 2; return { n: n, sc: sc }; })
+      .filter(function (x) { return x.sc >= 0.5; }).sort(function (a, b) { return b.sc - a.sc; });
+    // a clear best match wins on its own; ties come back so you can choose
+    if (scored.length > 1 && scored[0].sc > scored[1].sc) scored = [scored[0]];
+    else scored = scored.filter(function (x) { return x.sc === (scored[0] || {}).sc; });
+    return scored.map(function (x) { return x.n; });
+  }
+  function agSay(mine, text, buttons, results) {
+    var now = Date.now();
+    S.instant.push({ id: 'q' + now, ts: new Date(now).toISOString(), from: 'me', text: mine, instant: true },
+      { id: 'a' + now, ts: new Date(now + 1).toISOString(), from: 'instant', text: text, buttons: buttons || [], results: results || [] });
+    saveInstant(); render();
+    var main = document.getElementById('main'); if (main) main.scrollTop = main.scrollHeight;
+  }
+  function agQuickTimes(type, extra) {
+    return whenOptions().filter(function (o) { return ['eve', 'tom', 'tomaft', 'tomeve', 'sat'].indexOf(o[0]) > -1; }).slice(0, 4)
+      .map(function (o) { return Object.assign({ label: o[1], type: type, at: o[2].toISOString() }, extra || {}); });
+  }
+  function agNewJot(text, at, opts) {
+    opts = opts || {};
+    startJot(text); if (opts.level) S.jotLevel = opts.level;
+    S.jotWhen = at ? 'pick' : 'none'; S.pickTime = at ? localInputValue(new Date(at)) : '';
+    S.jotShare = !!opts.shared; S.jotCal = !!opts.calendar;
+    S.agentQuiet = true; saveJot(); S.agentQuiet = false;
+    var n = (S.data.notes || []).slice(-1)[0];
+    return n && n.text === text ? n : null;
+  }
+  function agJotReply(mine, n, at, shared, cal) {
+    var bits = ['Saved' + (shared ? ' for you both' : '') + ': “' + n.text + '”.'];
+    bits.push(at ? (n.level === 'gentle' ? 'It shows on Today ' + whenLabel(at) + ', no alert.' : 'Reminder ' + whenLabel(at) + (shared ? ' for you both.' : '.') + (n.level === 'important' ? ' Heads-up 30 min before.' : '')) : 'No time set.');
+    if (cal) bits.push('Added to the Family calendar.');
+    var b = [{ label: 'Change it', type: 'edit', id: n.lid || n.id }];
+    if (!at) b = agQuickTimes('settime', { id: n.lid || n.id }).concat(b);
+    else if (!shared) b.push({ label: 'Share with ' + otherName(), type: 'share', id: n.lid || n.id });
+    agSay(mine, bits.join(' '), b);
+  }
+  function agHelp() {
+    return 'I can do these straight away:\n• “Remind me to call the GP tomorrow at 10”\n• “Remind us to book the van on Saturday” (shared)\n• “Put dinner with Tunde on the calendar Friday 7pm”\n• “Add milk and eggs to the shopping list”\n• “Done: call the GP” · “Move the van to Monday”\n• “What’s on tomorrow?” · “What’s next?” · “Latest intel”\n• “I’m grateful for…” · “I had a glass of water” · “I feel stressed”\nAnything else, I’ll ask before passing it to your EA.';
+  }
+  // Returns true when it handled the message.
+  function agent(raw) {
+    var t = agClean(raw), lo = t.toLowerCase(), at, m, n;
+    if (!t) return false;
+    if (/^(help|what can you do|how do i use (this|you)|commands)\b/.test(lo)) { agSay(raw, agHelp()); return true; }
+
+    // shopping list
+    m = t.match(/^(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?$/i) || t.match(/^(?:we need|we're out of|we are out of|buy|get)\s+(?:some\s+|more\s+)?(.+?)(?:\s+from the shop(?:s)?)?$/i);
+    if (m && !/\b(calendar|remind)\b/i.test(t)) {
+      var gl = m[1].split(/\s*(?:,|\band\b|&)\s*/).map(function (x) { return x.trim(); }).filter(Boolean);
+      gl.forEach(function (g) { addGrocery(g); });
+      agSay(raw, 'Added to the shared shopping list: ' + gl.join(', ') + '.', [{ label: 'Open the list', type: 'tab', v: 'lists' }]);
+      return true;
+    }
+    m = t.match(/^(?:remove|take|delete)\s+(.+?)\s+(?:off|from)\s+(?:the\s+)?(?:shopping|grocery)(?:\s+list)?$/i);
+    if (m) {
+      var g = (S.data.groceries || []).filter(function (x) { return !x.ticked && x.name.toLowerCase() === m[1].toLowerCase().trim(); })[0];
+      if (g) { groceryOp(g.id, 'remove'); agSay(raw, 'Taken ' + g.name + ' off the shopping list.'); } else agSay(raw, 'I couldn’t find “' + m[1] + '” on the shopping list.');
+      return true;
+    }
+
+    // calendar
+    if (/\b(calendar|diary)\b/i.test(t) && /^(add|put|pop|book|schedule|stick|place|note)\b/i.test(t)) {
+      var what = t.replace(/^(add|put|pop|book|schedule|stick|place|note)\s+/i, '').replace(/\s*(?:on|in|to|into)\s+(?:the\s+|our\s+|my\s+)?(?:family\s+|shared\s+)?(?:calendar|diary)\b/i, ' ');
+      at = agWhen(what); what = agCap(agStripWhen(what));
+      if (!what) { agSay(raw, 'What should I put on the calendar?'); return true; }
+      if (!at) { agSay(raw, 'When should “' + what + '” go on the Family calendar?', agQuickTimes('calwhen', { text: what }).concat([{ label: 'Pick a time', type: 'calpick', text: what }])); return true; }
+      n = agNewJot(what, at, { shared: true, calendar: true });
+      if (n) agJotReply(raw, n, at, true, true);
+      return true;
+    }
+
+    // tick off
+    m = t.match(/^(?:done|finished|sorted|tick(?:\s+off)?|mark|i(?:'ve|’ve| have)\s+(?:done|finished|sorted|called|paid|booked|sent|emailed|bought)|completed?)[:\s]+(.+?)(?:\s+(?:as\s+)?done)?$/i);
+    if (m) {
+      var hits = agMatch(m[1]);
+      if (hits.length === 1) { noteOp(hits[0].id, 'done'); agSay(raw, 'Ticked off: “' + hits[0].text + '”. Nice one.', [{ label: 'Undo', type: 'undo', id: hits[0].id }]); }
+      else if (hits.length > 1) agSay(raw, 'Which one?', hits.slice(0, 4).map(function (x) { return { label: x.text.slice(0, 40), type: 'done', id: x.id }; }));
+      else agSay(raw, 'I couldn’t find that on your list. Your open jots are on Lists › My list.', [{ label: 'Open my list', type: 'tab', v: 'lists' }]);
+      return true;
+    }
+
+    // move to later
+    m = t.match(/^(?:move|push|snooze|postpone|shift|reschedule|remind me later about|put off)\s+(.+)$/i);
+    if (m) {
+      at = agWhen(m[1]);
+      var q = agStripWhen(m[1].replace(/\s+(?:to|until|till|for)\s*$/i, '').replace(/\s+(?:to|until|till)\s+(?=\S)/i, ' '));
+      var mv = agMatch(q);
+      if (!mv.length) { agSay(raw, 'I couldn’t find “' + q + '” on your list.'); return true; }
+      if (mv.length > 1) { agSay(raw, 'Which one?', mv.slice(0, 4).map(function (x) { return at ? { label: x.text.slice(0, 40), type: 'settime', id: x.id, at: at } : { label: x.text.slice(0, 40), type: 'movepick', id: x.id }; })); return true; }
+      n = mv[0];
+      if (!at) { agSay(raw, 'When should “' + n.text + '” come back?', agQuickTimes('settime', { id: n.id })); return true; }
+      agSetTime(n, at); agSay(raw, 'Moved “' + n.text + '” to ' + whenLabel(at) + '.');
+      return true;
+    }
+
+    // reminders and jots
+    m = t.match(/^(?:remind\s+(me|us|both of us)|don'?t let (?:me|us) forget|jot(?:\s+down)?|note(?:\s+down)?|add)\s*(?:to\s+|that\s+|about\s+)?(.+?)(?:\s+to\s+(?:my|our)\s+(?:list|to-?do(?:\s+list)?))?$/i);
+    if (m && !/\b(shopping|grocery)\b/i.test(t) && (!/^add\b/i.test(t) || /\bto\s+(?:my|our)\s+(?:list|to-?do)/i.test(t))) {
+      var shared = /^(us|both of us)$/i.test(m[1] || '') || /\b(our list|for (us )?both|both of us|shared)\b/i.test(t);
+      at = agWhen(m[2]);
+      var text = agCap(agStripWhen(m[2].replace(/\b(for (us )?both|both of us)\b/gi, ' ')));
+      if (!text) { agSay(raw, 'What should I remember?'); return true; }
+      n = agNewJot(text, at, { shared: shared, level: guessLevel(text) });
+      if (n) agJotReply(raw, n, at, shared, false);
+      return true;
+    }
+
+    // gratitude
+    m = t.match(/^(?:i(?:'m|’m| am)\s+)?(?:so\s+|really\s+)?(?:grateful|thankful)\s+(?:for|that)\s+(.+)$/i) || t.match(/^grateful[:\s]+(.+)$/i);
+    if (m) { S.grText = agCap(m[1]); addGratitude(); agSay(raw, 'Added to your gratitude list (just for you).', [{ label: 'Share with ' + otherName(), type: 'grsharelast' }]); return true; }
+
+    // water
+    if (/\b(drank|had|drunk)\s+(a|one|another|1)?\s*(glass|cup|bottle)\s*(of\s+water)?\b|\badd\s+(a\s+)?glass\b|^water\b/i.test(t)) {
+      S.water[todayKey()] = glasses() + 1; LS.set('fea.water', S.water); syncWater();
+      agSay(raw, 'Glass ' + glasses() + ' of ' + waterGoal() + ' today.' + (glasses() >= waterGoal() ? ' Goal met — well done.' : ''), gameKind() !== 'off' ? [{ label: 'Play the challenge', type: 'challenge' }] : []);
+      return true;
+    }
+
+    // feeling stressed
+    if (/\b(stressed|anxious|overwhelmed|panick?(y|ing)?|tense|on edge|can'?t (calm|relax|switch off)|calm me|breathe|need a break)\b/i.test(t)) {
+      agSay(raw, 'Let’s slow things down. One minute of breathing helps your body settle.', [{ label: 'Breathe with me · 1 min', type: 'breathe' }]);
+      return true;
+    }
+
+    // what's on
+    m = lo.match(/^what(?:'s|’s| is| have i got| do (?:i|we) have)\s+(?:on\s+)?(today|tomorrow|this week|next week)$/);
+    if (m) { agSay(raw, agWhatsOn(m[1])); return true; }
+
+    // questions about history, lists and what needs you (jobs like "book", "apply", "reply" go to the EA instead)
+    if (classify(raw) === 'action' && !builtIn(raw)) return false;
+    if (answerInstantly(raw)) { render(); return true; }
+    return false;
+  }
+  function agWhatsOn(span) {
+    var s0 = dayStart(new Date()).getTime(), DAY = 86400000, a, b;
+    if (span === 'today') { a = s0; b = s0 + DAY; } else if (span === 'tomorrow') { a = s0 + DAY; b = s0 + 2 * DAY; }
+    else if (span === 'this week') { a = Date.now(); b = s0 + 7 * DAY; } else { a = s0 + 7 * DAY; b = s0 + 14 * DAY; }
+    var list = [];
+    openNotes().forEach(function (n) { var t = Date.parse(n.remindAt); if (t >= a && t < b) list.push([t, n.text + (n.shared ? ' (both)' : '')]); });
+    items('plan').forEach(function (i) { var t = Date.parse(i.due); if (i.status === 'open' && t >= a && t < b) list.push([t, i.title]); });
+    list.sort(function (x, y) { return x[0] - y[0]; });
+    if (!list.length) return 'Nothing timed ' + span + '.';
+    return agCap(span) + ':\n' + list.slice(0, 8).map(function (x) { return '• ' + whenLabel(new Date(x[0]).toISOString()) + ' — ' + x[1]; }).join('\n') + (list.length > 8 ? '\n…and ' + (list.length - 8) + ' more.' : '');
+  }
+  function agSetTime(n, at) {
+    S.gChangedAt = Date.now(); n.remindAt = at; render();
+    if (String(n.id).indexOf('local-') !== 0) api.post({ type: 'note', op: 'snooze', id: n.id, remindAt: at }).catch(function () { toast('Couldn’t save that. Try again.'); });
+  }
+  function agHandoff(raw, files, ref) {
+    var key = 'h' + Date.now();
+    AG_HANDOFF[key] = { text: raw, files: files, ref: ref };
+    var what = raw ? '“' + raw + '”' : files.length + ' file' + (files.length === 1 ? '' : 's');
+    agSay(raw || ('Sent ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '.'),
+      'I can’t do ' + what + ' straight away. Shall I pass it to your EA? It acts at ' + runWhen() + '.',
+      [{ label: 'Send to your EA', type: 'send', key: key, text: raw, ref: ref || '' }].concat(raw ? [{ label: 'Make it a jot', type: 'jot', text: raw }] : []).concat([{ label: 'Keep it here', type: 'keep' }]));
+  }
+  function agButton(msgId, idx) {
+    var m = (S.instant || []).filter(function (x) { return x.id === msgId; })[0]; if (!m || m.used) return;
+    var b = (m.buttons || [])[+idx]; if (!b) return;
+    var mark = function (label) { m.used = label || b.label; saveInstant(); render(); };
+    var n = b.id ? noteById(b.id) : null;
+    switch (b.type) {
+      case 'send':
+        var h = AG_HANDOFF[b.key] || { text: b.text, files: [], ref: b.ref };
+        delete AG_HANDOFF[b.key];
+        S.instant = S.instant.filter(function (x) { return !(x.from === 'me' && x.id === 'q' + msgId.slice(1)); });
+        mark('Sent to your EA'); sendToEA(h.text || '', h.files || [], h.ref || null); break;
+      case 'jot': mark(); startJot(agCap(b.text)); openSheet('jot'); break;
+      case 'keep': mark('Kept here'); break;
+      case 'edit': mark(); if (startEdit(b.id)) openSheet('jot'); break;
+      case 'share':
+        if (n) { S.gChangedAt = Date.now(); n.shared = true; render(); if (String(n.id).indexOf('local-') !== 0) api.post({ type: 'note', op: 'edit', id: n.id, shared: true }).catch(function () { toast('Couldn’t share it. Try again.'); }); }
+        mark('Shared with ' + otherName()); break;
+      case 'settime': if (n) { agSetTime(n, b.at); mark('Set for ' + whenLabel(b.at)); } break;
+      case 'movepick': mark(); if (n) agSay(n.text, 'When should “' + n.text + '” come back?', agQuickTimes('settime', { id: n.id })); break;
+      case 'calwhen': mark(); var cn = agNewJot(b.text, b.at, { shared: true, calendar: true }); if (cn) agJotReply(b.text + ' · ' + b.label, cn, b.at, true, true); break;
+      case 'calpick': mark(); startJot(b.text); S.jotShare = true; S.jotCal = true; S.jotWhen = 'pick'; S.jotWhenSet = true; openSheet('jot'); break;
+      case 'done': if (n) { noteOp(n.id, 'done'); mark('Ticked off'); } break;
+      case 'undo': if (n) { noteOp(n.id, 'undo'); mark('Undone'); } break;
+      case 'tab': mark(b.label); setTab(b.v); break;
+      case 'breathe': mark(); startBreath(); break;
+      case 'challenge': mark(); if (gameKind() !== 'off' && window.FEA_GAMES) startChallenge(nextKind()); break;
+      case 'grsharelast':
+        var gs = (S.data.gratitude || []).filter(function (x) { return !x.from; }).slice(-1)[0];
+        if (gs && !gs.shared) grOp(gs.id, 'share'); mark('Shared with ' + otherName()); break;
+    }
+  }
+
   function sendChat() {
     var text = (S.draft || '').trim();
     var files = S.files.slice();
     if (S.reading) { toast('Still preparing your files\u2026'); return; }
     if (!text && !files.length) return;
-    var route = files.length || S.ref ? 'action' : classify(text);
-    var gm = route === 'action' && text.match(/^(?:please\s+)?add\s+(.+?)\s+to\s+(?:the\s+|our\s+|my\s+)?(?:shopping|grocery|groceries)(?:\s+list)?\.?$/i);
-    if (gm) {
-      var gl = gm[1].split(/\s*(?:,|\band\b)\s*/).filter(Boolean);
-      S.draft = '';
-      S.instant.push({ id: 'q' + Date.now(), ts: new Date().toISOString(), from: 'me', text: text, instant: true },
-        { id: 'a' + Date.now(), ts: new Date(Date.now() + 1).toISOString(), from: 'instant', text: 'Added to the shared shopping list: ' + gl.join(', ') + '.' });
-      saveInstant();
-      gl.forEach(function (g) { addGrocery(g); });
-      render(); return;
-    }
-    if (route === 'other' && builtIn(text) && answerInstantly(text)) { S.draft = ''; render(); return; }
-    if (route === 'jot') {
-      S.draft = '';
-      startJot(text.replace(/^remind me\s*(to\s+|about\s+)?/i, '').replace(/^./, function (c) { return c.toUpperCase(); }));
-      render(); openSheet('jot');
-      toast('Pick a time and save. Your phone reminds you, no EA run needed.', { ms: 5000 });
-      return;
-    }
-    if ((route === 'lookup' || route === 'question') && answerInstantly(text)) { S.draft = ''; render(); return; }
-    var unanswered = route === 'question' || route === 'lookup';
+    var ref = S.ref;
+    S.draft = ''; S.files = []; S.ref = null;
+    if (!files.length && !ref && agent(text)) return;
+    agHandoff(text, files, ref);
+  }
+  // Only after you say yes: the message (and any files) goes to the EA for its next run.
+  function sendToEA(text, files, ref) {
     var tmp = { id: 'local-' + Date.now(), ts: new Date().toISOString(), from: 'me', text: text || ('Sent ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '.'), status: 'sending',
       files: files.map(function (f) { return { name: f.name, mime: f.mime, size: f.size, preview: f.preview }; }) };
     S.localMsgs = (S.localMsgs || []).concat([tmp]);
     S.data.messages.push(tmp);
-    var ref = S.ref;
-    S.draft = ''; S.files = []; S.ref = null;
     render();
     api.post({ type: 'message', text: text, ref: ref || '', files: files.map(function (f) { return { name: f.name, mime: f.mime, data: f.data }; }) }).then(function (res) {
       if (!res || !res.ok) throw new Error(res && res.error);
@@ -455,10 +650,7 @@
       (res.files || []).forEach(function (sf, k) { if (tmp.files[k]) tmp.files[k].url = sf.url; });
       S.localMsgs = S.localMsgs.filter(function (m) { return m !== tmp; });
       if (files.length) setTimeout(load, 300); // pull the new History entry
-      if (unanswered) {
-        S.instant.push({ id: 'n' + Date.now(), ts: new Date(Date.now() + 1).toISOString(), from: 'instant', text: 'I couldn\u2019t find that in your last 6 months of history, so I\u2019ve passed it to your EA. It\u2019ll answer at ' + runWhen() + '.' });
-        saveInstant();
-      } else toast((files.length ? 'Sent with ' + files.length + ' file' + (files.length === 1 ? '' : 's') : 'Sent') + ' \u00b7 your EA does this at ' + runWhen());
+      toast((files.length ? 'Sent with ' + files.length + ' file' + (files.length === 1 ? '' : 's') : 'Sent') + ' \u00b7 your EA does this at ' + runWhen());
     }).catch(function (e) {
       tmp.status = 'failed'; tmp.retryFiles = files; tmp.retryRef = ref;
       var why = { file_type: 'That file type can\u2019t be sent.', file_too_big: 'Files are too big. Try fewer at once.', too_many_files: 'Up to 5 files at a time.' }[e && e.message];
@@ -472,13 +664,25 @@
     else toast(t || 'Nothing to copy.', { ms: 8000 });
   }
   function noteById(id) { return (S.data.notes || []).filter(function (x) { return x.id === id || x.lid === id; })[0]; }
+  function calNote(r, wanted) {
+    if (!wanted || !r || r.calendar !== false) return;
+    toast(r.calendarError === 'needs_time' ? 'Saved. Add a time to put it on the Family calendar.' : 'Saved, but the Family calendar couldn\u2019t be reached. Try again later.', { ms: 5000 });
+  }
+  function shareChips() {
+    var hasTime = S.jotWhen && S.jotWhen !== 'none';
+    return '<div class="opts opts2" role="group" aria-label="Share">' +
+      '<button class="opt sw2" role="switch" aria-checked="' + !!S.jotShare + '" data-act="jshare"><b>' + svg(I.heart, 14) + ' Share with ' + esc(otherName()) + '</b><span>Both see it; either ticks it off</span></button>' +
+      '<button class="opt sw2" role="switch" aria-checked="' + !!(S.jotCal && hasTime) + '" data-act="jcal"' + (hasTime ? '' : ' aria-disabled="true"') + '><b>' + svg(I.plan, 14) + ' Family calendar</b><span>' + (hasTime ? 'Adds it at that time' : 'Pick a time first') + '</span></button></div>';
+  }
   function startJot(text) {
-    S.editId = null; S.jotText = text || ''; S.pickTime = ''; S.jotLevel = 'normal'; S.jotLevelSet = false; S.jotWhenSet = false; S.jotGuessed = false;
+    S.editId = null; S.jotText = text || ''; S.pickTime = ''; S.jotLevel = 'normal'; S.jotLevelSet = false; S.jotWhenSet = false; S.jotGuessed = false; S.jotShare = false; S.jotCal = false;
     S.jotWhen = defaultWhen();
     if (text) jotGuess(text, true);
   }
   function startEdit(id) {
     var n = noteById(id); if (!n) return false;
+    if (n.from) { toast('Only ' + (PEOPLE[n.from] || 'they') + ' can change this one. You can tick it off or move it to later.'); return false; }
+    S.jotShare = !!n.shared; S.jotCal = !!n.onCalendar;
     S.editId = id; S.jotText = n.text; S.jotLevel = n.level || 'normal'; S.jotLevelSet = true; S.jotWhenSet = true; S.jotGuessed = false;
     S.jotWhen = n.remindAt ? 'keep' : 'none'; S.pickTime = n.remindAt ? localInputValue(new Date(n.remindAt)) : '';
     return true;
@@ -495,6 +699,7 @@
     if (quiet) return;
     var lv = document.getElementById('jot-level'); if (lv) lv.innerHTML = levelChips();
     var wh = document.getElementById('jot-whenwrap'); if (wh) wh.innerHTML = whenPicker(true);
+    var sc = document.getElementById('jot-share'); if (sc) sc.innerHTML = shareChips();
   }
   function saveJot() {
     S.gChangedAt = Date.now();
@@ -505,24 +710,27 @@
     if (S.editId) {
       var n = noteById(S.editId);
       if (!n) { closeSheet(); return; }
-      var before = JSON.stringify(n), body = { type: 'note', op: 'edit', id: n.id, text: text, level: level };
+      var before = JSON.stringify(n), body = { type: 'note', op: 'edit', id: n.id, text: text, level: level, shared: !!S.jotShare, calendar: !!S.jotCal };
+      n.shared = !!S.jotShare; n.onCalendar = !!S.jotCal && !!(S.jotWhen === 'keep' ? n.remindAt : at);
       if (S.jotWhen !== 'keep') { body.remindAt = at; n.remindAt = at; }
       n.text = text; n.level = level; S.jotText = '';
       closeSheet(); render();
       toast('Updated.' + (n.remindAt ? ' ' + whenLabel(n.remindAt) + (level === 'gentle' ? ', no alert.' : '.') : ''));
       if (String(n.id).indexOf('local-') === 0) return;
-      api.post(body).then(function (r) { if (!r || !r.ok) throw new Error(); }).catch(function () {
+      api.post(body).then(function (r) { if (!r || !r.ok) throw new Error(); calNote(r, body.calendar); }).catch(function () {
         Object.assign(n, JSON.parse(before)); toast('Couldn’t save the change. Try again.'); render();
       });
       return;
     }
-    var lid = 'local-n' + Date.now(), tmp = { id: lid, lid: lid, text: text, created: new Date().toISOString(), remindAt: at, status: 'open', level: level };
+    var lid = 'local-n' + Date.now(), tmp = { id: lid, lid: lid, text: text, created: new Date().toISOString(), remindAt: at, status: 'open', level: level, shared: !!S.jotShare, onCalendar: !!(S.jotCal && at) };
     S.localNotes = (S.localNotes || []).concat([tmp]);
     S.data.notes.push(tmp); S.jotText = '';
     closeSheet(); render();
-    toast(!at ? 'Saved to My list.' : level === 'gentle' ? 'Saved. It shows on Today ' + whenLabel(at) + ', no alert.' : level === 'important' ? 'Saved. Heads-up 30 min before, then I’ll remind you ' + whenLabel(at) + '.' : 'Saved. I’ll remind you ' + whenLabel(at) + '.');
-    api.post({ type: 'note', op: 'add', text: text, remindAt: at, level: level }).then(function (r) {
+    if (!S.agentQuiet) toast(!at ? 'Saved to My list.' : level === 'gentle' ? 'Saved. It shows on Today ' + whenLabel(at) + ', no alert.' : level === 'important' ? 'Saved. Heads-up 30 min before, then I’ll remind you ' + whenLabel(at) + '.' : 'Saved. I’ll remind you ' + whenLabel(at) + '.');
+    var wantCal = !!(S.jotCal && at);
+    api.post({ type: 'note', op: 'add', text: text, remindAt: at, level: level, shared: !!S.jotShare, calendar: wantCal }).then(function (r) {
       if (!r || !r.ok) throw new Error();
+      calNote(r, wantCal); if (wantCal && r.calendar === false) tmp.onCalendar = false;
       tmp.id = r.id; S.localNotes = S.localNotes.filter(function (n) { return n !== tmp; });
     }).catch(function () {
       S.data.notes = S.data.notes.filter(function (n) { return n !== tmp; }); S.localNotes = (S.localNotes || []).filter(function (n) { return n !== tmp; });
@@ -750,13 +958,27 @@
   }
   function today() {
     var all = needs();
+    var jots = openNotes().map(function (n) { return { owner: n.shared ? 'both' : S.person, title: n.text, sub: n.remindAt ? whenLabel(n.remindAt) : 'No time set', go: 'lists', jot: true }; });
+    var counted = all.concat(jots);
     var tiles = [S.person, 'both', 'either'].map(function (o) {
-      var w = owner(o), n = all.filter(function (x) { return x.owner === o; }).length;
+      var w = owner(o), n = counted.filter(function (x) { return x.owner === o; }).length;
       var sub = o === S.person ? 'Just for you' : o === 'both' ? 'Needs you together' : 'Whoever’s free';
-      return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '"><span class="n">' + n + '</span><span class="l">' + esc(w.label) + '</span><span class="s">' + sub + '</span></button>';
+      return '<button class="tile ' + w.cls + '" data-act="who" data-v="' + o + '" aria-pressed="' + (S.who === o) + '" aria-label="' + n + ' for ' + esc(w.label) + '"><span class="n">' + n + '</span><span class="l">' + esc(o === S.person ? S.name : o === 'both' ? 'Both' : 'Either') + '</span><span class="s">' + sub + '</span></button>';
     }).join('');
-    var list = all.filter(function (x) { return okWho(x.owner); });
+    var list = (S.who === 'all' ? all : counted).filter(function (x) { return okWho(x.owner); });
     var html = [askBar()];
+    // Who needs to act: right at the top, and tapping a tile shows its list straight underneath.
+    html.push('<section class="tiles compact" aria-label="Who needs to act">' + tiles + '</section>');
+    function whoList(items) {
+      return '<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + items.length + '</h2>' +
+        (S.who !== 'all' ? '<button class="textbtn" data-act="who" data-v="all">Show all</button>' : '') + '</div>' +
+        (items.length ? '<div class="list">' + items.map(function (n) {
+          var w = owner(n.owner);
+          return '<button class="rowbtn" data-act="go" data-v="' + n.go + '"><span class="obadge ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
+            '<span class="col"><span class="t">' + esc(n.title) + '</span><span class="s">' + esc((n.jot ? 'Jot \u00b7 ' : '') + n.sub) + '</span><span>' + ochip(n.owner) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
+        }).join('') + '</div>' : '<div class="allclear">' + svg(I.check, 20) + 'All clear. Nothing else needs you here.</div>') + '</section>';
+    }
+    if (S.who !== 'all') html.push(whoList(list));
     if (!S.demo && !isStandalone() && !S.installHidden) {
       html.push('<section class="card pad stack" aria-label="Install"><div class="row-between"><b>Add to your Home Screen</b><button class="textbtn" data-act="hideinstall">Hide</button></div>' +
         '<div class="note">In Safari, tap Share, then “Add to Home Screen”. Open it from there and paste your key once more.</div>' +
@@ -765,20 +987,12 @@
     // "Your day": what's next, then the rest of today by morning, afternoon and evening.
     var day = yourDay(all);
     html.push(day.html);
+    // Your day, calm and gratitude sit together at the top, so they need little or no scrolling.
+    html.push(calmCard());
     var gc = gratitudeCard(); if (gc) html.push(gc);
     var qc = quoteCard(); if (qc) html.push(qc);
-    html.push(calmCard());
     html.push(waterCard());
-    var rest = list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; });
-    html.push('<section class="tiles" aria-label="Who needs to act">' + tiles + '</section>');
-    list = rest;
-    html.push('<section class="stack"><div class="row-between"><h2 class="h2">' + (S.who === 'all' ? 'Everything else' : esc(owner(S.who).label)) + ' · ' + list.length + '</h2>' +
-      (S.who !== 'all' ? '<button class="textbtn" data-act="who" data-v="all">Show all</button>' : '') + '</div>' +
-      (list.length ? '<div class="list">' + list.map(function (n) {
-        var w = owner(n.owner);
-        return '<button class="rowbtn" data-act="go" data-v="' + n.go + '"><span class="obadge ' + w.cls + '" aria-hidden="true">' + esc(w.short) + '</span>' +
-          '<span class="col"><span class="t">' + esc(n.title) + '</span><span class="s">' + esc(n.sub) + '</span><span>' + ochip(n.owner) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
-      }).join('') + '</div>' : '<div class="allclear">' + svg(I.check, 20) + 'All clear. Nothing else needs you here.</div>') + '</section>');
+    if (S.who === 'all') html.push(whoList(list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; })));
 
     var q = S.data.queue.concat(Object.keys(S.pending).map(function (id) { return { text: S.pending[id].label + ' (sending)' }; }));
     if (q.length) {
@@ -836,14 +1050,19 @@
     if (e.kind === 'note') return '<button class="btn small" data-act="snoozenote" data-id="' + esc(e.id) + '">Later</button>';
     return e.id ? '<button class="btn small" data-act="snoozeitem" data-id="' + esc(e.id) + '">Later</button>' : '';
   }
+  function jotTags(n) {
+    if (!n) return '';
+    return (n.from ? '<span class="jtag">From ' + esc(PEOPLE[n.from] || n.from) + '</span>' : n.shared ? '<span class="jtag both">Both</span>' : '') + (n.onCalendar ? '<span class="jcal" title="On the Family calendar" aria-label="On the Family calendar">' + svg(I.plan, 12) + '</span>' : '');
+  }
   function levelMark(l) { return l === 'important' ? '<span class="lvmark imp" title="Important" aria-label="Important"></span>' : l === 'gentle' ? '<span class="lvmark gen" title="Gentle, no alert" aria-label="Gentle, no alert"></span>' : ''; }
   function yourDay(needsList) {
     var now = Date.now(), d0 = dayEntries(), entries = d0.list, cur = slotOf(now);
     var timed = entries.filter(function (e) { return e.at !== null; });
-    var next = timed.filter(function (e) { return !e.late; })[0] || timed.filter(function (e) { return e.late; }).slice(-1)[0] || null;
+    // Order: the next timed thing today, then what needs you, then an untimed jot, and only then something missed.
+    var next = timed.filter(function (e) { return !e.late; })[0] || null;
     var need = null;
     if (!next) need = needsList[0] || null;
-    if (!next && !need) next = entries[0] || null;
+    if (!next && !need) next = entries.filter(function (e) { return e.at === null; })[0] || timed.filter(function (e) { return e.late; }).slice(-1)[0] || null;
     var doneN = S.data.doneToday || 0, bump = doneN > S.lastDone && S.lastDone > 0; S.lastDone = doneN;
     var shown = entries.filter(function (e) { return e.kind === 'item'; }).map(function (e) { return e.id; });
     var h = '<section class="yourday" aria-label="Your day"><div class="row-between"><h2 class="h2" style="color:var(--olive)">Your day</h2>' +
@@ -871,9 +1090,14 @@
       var main = e.kind === 'note'
         ? '<button class="gcheck" data-act="notedone" data-id="' + esc(e.id) + '" aria-label="Done: ' + esc(e.text) + '"><span class="box"></span></button><button class="col linkcol" data-act="editnote" data-id="' + esc(e.id) + '" aria-label="Edit: ' + esc(e.text) + '">'
         : '<span class="pdot" aria-hidden="true"></span><button class="col linkcol" data-act="go" data-v="' + esc(e.go) + '">';
-      return '<li class="drow' + (quiet ? ' quiet' : '') + '">' + main + '<span class="t">' + esc(e.text) + levelMark(e.level) + '</span><span class="s">' + esc(sub) + '</span></button>' + dayRowBtns(e) + '</li>';
+      return '<li class="drow' + (quiet ? ' quiet' : '') + '">' + main + '<span class="t">' + esc(e.text) + levelMark(e.level) + (e.kind === 'note' ? jotTags(noteById(e.id)) : '') + '</span><span class="s">' + esc(sub) + '</span></button>' + dayRowBtns(e) + '</li>';
     }
-    if (rest.length) {
+    if (rest.length && !S.showDay) {
+      // Folded by default: one quiet line for the rest of today.
+      var counts = SLOTS.map(function (sl) { var n = rest.filter(function (e) { return e.slot === sl[0]; }).length; return n ? sl[1] + ' ' + n : ''; }).filter(Boolean).join(' \u00b7 ');
+      h += '<button class="daymore" data-act="toggleday" aria-expanded="false"><span>Rest of today \u00b7 ' + esc(counts) + '</span><span class="mt">Show</span></button>';
+    } else if (rest.length) {
+      h += '<button class="daymore open" data-act="toggleday" aria-expanded="true"><span>Rest of today</span><span class="mt">Hide</span></button>';
       h += '<div class="slots">' + SLOTS.map(function (sl) {
         var rows = rest.filter(function (e) { return e.slot === sl[0]; });
         if (!rows.length) return '';
@@ -926,18 +1150,85 @@
     var next = MINDFUL[(MINDFUL.indexOf(m) + 1) % MINDFUL.length];
     return '<section class="card pad stack calm" aria-label="Calm"><div class="row-between"><span class="h2 calmh">' + svg(I.wind, 14) + ' Calm · ' + esc(m.title) + '</span><span class="cdots" aria-label="' + Object.keys(done).length + ' of 3 calm moments today">' + dots + '</span></div>' +
       (done[m.key] ? '<p class="ctext soft">Done for now. ' + (m !== MINDFUL[2] ? 'Next: ' + esc(next.title.toLowerCase()) + ' at ' + next.at + '.' : 'Rest well.') + '</p>'
-        : '<p class="ctext">' + esc(text) + '</p><div class="btns"><button class="btn small olive" data-act="breathe">' + svg(I.wind, 16) + 'Breathe with me · 1 min</button><button class="btn small" data-act="calmdone">I did it</button></div>') + '</section>';
+        : '<p class="ctext">' + esc(text) + '</p><div class="calmbtns"><button class="btn small olive" data-act="breathe">' + svg(I.wind, 16) + 'Breathe \u00b7 1 min</button><button class="textbtn" data-act="calmdone">I did it</button></div>') + '</section>';
   }
   var breathTimer = null;
+  /* Soft sound for the breathing guide: a rising and falling tone, a chime at each change, a quiet
+     sea-like wash underneath, and the phone's voice. All made on the phone, nothing downloaded.
+     Sound starts only from your tap; on iPhone the silent switch mutes it. */
+  var Calm = {
+    ctx: null, nodes: null,
+    on: function () { return S.prefs.calmSound !== false; },
+    start: function () {
+      if (!this.on() || this.nodes) return;
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+        var c = this.ctx = this.ctx || new AC(); if (c.state === 'suspended') c.resume();
+        var master = c.createGain(); master.gain.setValueAtTime(0.0001, c.currentTime); master.connect(c.destination);
+        master.gain.exponentialRampToValueAtTime(0.9, c.currentTime + 2);
+        // sea-like wash: soft filtered noise that swells slowly
+        var len = c.sampleRate * 4, buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0), last = 0;
+        for (var i = 0; i < len; i++) { var w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.2; }
+        var noise = c.createBufferSource(); noise.buffer = buf; noise.loop = true;
+        var lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
+        var wash = c.createGain(); wash.gain.value = 0.05;
+        var lfo = c.createOscillator(), lfoGain = c.createGain(); lfo.frequency.value = 0.09; lfoGain.gain.value = 0.03; lfo.connect(lfoGain); lfoGain.connect(wash.gain);
+        noise.connect(lp); lp.connect(wash); wash.connect(master); noise.start(); lfo.start();
+        // the breathing tone
+        var tone = c.createOscillator(), toneGain = c.createGain(); tone.type = 'sine'; tone.frequency.value = 174; toneGain.gain.value = 0.0001;
+        tone.connect(toneGain); toneGain.connect(master); tone.start();
+        this.nodes = { master: master, noise: noise, lfo: lfo, tone: tone, toneGain: toneGain };
+      } catch (e) { this.nodes = null; }
+    },
+    phase: function (name, secs) {
+      if (!this.on()) return;
+      var n = this.nodes, c = this.ctx;
+      if (n && c) {
+        try {
+          var t = c.currentTime, f = n.tone.frequency, g = n.toneGain.gain;
+          f.cancelScheduledValues(t); g.cancelScheduledValues(t); f.setValueAtTime(f.value, t); g.setValueAtTime(Math.max(0.0001, g.value), t);
+          if (name === 'Breathe in') { f.exponentialRampToValueAtTime(262, t + secs); g.exponentialRampToValueAtTime(0.06, t + secs); }
+          else if (name === 'Breathe out') { f.exponentialRampToValueAtTime(174, t + secs); g.exponentialRampToValueAtTime(0.012, t + secs); }
+          else g.exponentialRampToValueAtTime(0.025, t + 0.6);
+          // a soft chime at each change
+          [528, 1056].forEach(function (hz, k) {
+            var o = c.createOscillator(), og = c.createGain(); o.type = 'sine'; o.frequency.value = hz;
+            og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(k ? 0.015 : 0.05, t + 0.02); og.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+            o.connect(og); og.connect(n.master); o.start(t); o.stop(t + 2.3);
+          });
+        } catch (e) {}
+      }
+      try {
+        if (window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+          var u = new SpeechSynthesisUtterance(name.toLowerCase()); u.lang = 'en-GB'; u.rate = 0.8; u.pitch = 0.9; u.volume = 0.6;
+          var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^en-GB/i.test(x.lang); })[0]; if (v) u.voice = v;
+          window.speechSynthesis.speak(u);
+        }
+      } catch (e) {}
+    },
+    stop: function () {
+      var n = this.nodes, c = this.ctx; this.nodes = null;
+      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+      if (!n || !c) return;
+      try {
+        var t = c.currentTime; n.master.gain.cancelScheduledValues(t); n.master.gain.setValueAtTime(Math.max(0.0001, n.master.gain.value), t); n.master.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+        setTimeout(function () { try { n.noise.stop(); n.lfo.stop(); n.tone.stop(); n.master.disconnect(); } catch (e) {} }, 1400);
+      } catch (e) {}
+    }
+  };
+
   function breathSheet() {
     var b = S.breath; if (!b) return '';
     return sheetWrap('Breathe', '<div class="row-between"><span class="h2" style="font-size:.75rem;color:var(--olive)">' + svg(I.wind, 14) + ' ' + esc(b.m.title) + '</span><button class="textbtn" data-act="closesheet">Stop</button></div>' +
       '<div class="breath"><div class="bcircle" id="bcircle"><span id="bphase">Get comfortable</span><b id="bcount"></b></div></div>' +
-      '<p class="note center" id="bleft">About a minute. Follow the circle.</p>');
+      '<p class="note center" id="bleft">About a minute. Follow the circle.</p>' +
+      '<div class="center"><button class="textbtn" data-act="calmsound" aria-pressed="' + Calm.on() + '">' + svg(I.speaker, 15) + (Calm.on() ? 'Sound on' : 'Sound off') + '</button></div>');
   }
   function startBreath() {
     var m = calmSlot(); S.breath = { m: m, start: Date.now() };
     openSheet('breathe');
+    Calm.start();
     clearInterval(breathTimer);
     var cycle = m.breath.reduce(function (a, p) { return a + p[1]; }, 0), rounds = Math.max(3, Math.round(60 / cycle)), total = rounds * cycle * 1000, lead = 2000;
     var lastPhase = '';
@@ -947,14 +1238,14 @@
       if (!ph) return;
       if (t < 0) return;
       if (t >= total) {
-        clearInterval(breathTimer); markCalm(m.key); ph.textContent = 'Well done'; ct.textContent = ''; ci.className = 'bcircle rest';
+        clearInterval(breathTimer); markCalm(m.key); Calm.stop(); ph.textContent = 'Well done'; ct.textContent = ''; ci.className = 'bcircle rest';
         lf.textContent = 'Notice how you feel now.'; setTimeout(function () { if (S.sheet === 'breathe') { closeSheet(); render(); toast('A calm moment, done.'); } }, 2200); return;
       }
       var inCycle = t % (cycle * 1000), acc = 0, p = m.breath[0], left = 0;
       for (var i = 0; i < m.breath.length; i++) { if (inCycle < (acc + m.breath[i][1]) * 1000) { p = m.breath[i]; left = Math.ceil(((acc + m.breath[i][1]) * 1000 - inCycle) / 1000); break; } acc += m.breath[i][1]; }
       ct.textContent = left;
       if (p[0] !== lastPhase || (lastPhase === 'Hold' && ph.textContent !== p[0])) {
-        var prev = lastPhase; lastPhase = p[0]; ph.textContent = p[0];
+        var prev = lastPhase; lastPhase = p[0]; ph.textContent = p[0]; Calm.phase(p[0], p[1]);
         ci.style.transitionDuration = p[1] + 's';
         ci.className = 'bcircle ' + (p[0] === 'Breathe in' ? 'grow' : p[0] === 'Breathe out' ? 'shrink' : (prev === 'Breathe in' ? 'grow' : 'shrink'));
       }
@@ -1150,7 +1441,7 @@
     } else {
       var open = openNotes(), done = notes.filter(function (n) { return n.status === 'done'; });
       html.push('<button class="btn big olive" data-act="jot">' + svg(I.plus, 20) + 'Jot something down</button>');
-      html.push('<div class="note">Only you see this list. Tap any jot to change it. Gentle ones never buzz.</div>');
+      html.push('<div class="note">Only you see your jots, unless you share one. Tap a jot to change it. Gentle ones never buzz.</div>');
       if (!open.length) html.push('<div class="empty">Nothing jotted. When a thought pops up, tap + and get it out of your head.</div>');
       else html.push('<div class="list">' + open.map(noteRow).join('') + '</div>');
       if (done.length) html.push('<section class="stack" style="gap:8px"><h2 class="h2">Done recently · ' + done.length + '</h2><div class="list basket">' + done.map(noteRow).join('') + '</div></section>');
@@ -1167,7 +1458,7 @@
   function noteRow(n) {
     var done = n.status === 'done', over = !done && n.remindAt && Date.parse(n.remindAt) < Date.now();
     return '<div class="grow-row' + (done ? ' ticked' : '') + '"><button class="gcheck" data-act="' + (done ? 'noteundo' : 'notedone') + '" data-id="' + esc(n.id) + '" aria-pressed="' + done + '" aria-label="' + (done ? 'Not done: ' : 'Done: ') + esc(n.text) + '"><span class="box">' + (done ? svg(I.check, 16) : '') + '</span></button>' +
-      (done ? '<span class="col" style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0">' : '<button class="col linkcol notecol" data-act="editnote" data-id="' + esc(n.id) + '" aria-label="Edit: ' + esc(n.text) + '">') + '<span class="gname">' + esc(n.text) + levelMark(n.level) + '</span>' +
+      (done ? '<span class="col" style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0">' : '<button class="col linkcol notecol" data-act="editnote" data-id="' + esc(n.id) + '" aria-label="Edit: ' + esc(n.text) + '">') + '<span class="gname">' + esc(n.text) + levelMark(n.level) + jotTags(n) + '</span>' +
       (n.remindAt && !done ? '<span class="s' + (over ? ' late' : '') + '" style="font-size:.75rem">' + svg(I.bell, 12) + ' ' + (over ? 'Was due ' : '') + esc(whenLabel(n.remindAt)) + '</span>' : (done ? '' : '<span class="s" style="font-size:.75rem;color:var(--muted)">No time' + (n.level === 'gentle' ? ' \u00b7 gentle' : '') + '</span>')) + (done ? '</span>' : '</button>') +
       (done ? '<button class="fx" data-act="notedelete" data-id="' + esc(n.id) + '" aria-label="Delete ' + esc(n.text) + '">' + svg(I.x, 16) + '</button>' : '<button class="btn small" data-act="snoozenote" data-id="' + esc(n.id) + '">Later</button>') + '</div>';
   }
@@ -1213,6 +1504,7 @@
       (ed ? '' : '<div class="note" style="font-size:.8125rem;margin-top:-8px">Tip: say when, like “tomorrow at 3pm”, and I’ll set it.</div>') +
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">How important?</span><div id="jot-level" class="stack" style="gap:6px">' + levelChips() + '</div></div>' +
       '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">When</span><div id="jot-whenwrap" class="stack" style="gap:10px">' + whenPicker(true) + '</div></div>' +
+      '<div class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Share</span><div id="jot-share">' + shareChips() + '</div></div>' +
       (ed ? '<div class="btns"><button class="btn warn" data-act="notedelete" data-id="' + esc(ed.id) + '">Delete</button><button class="btn good" data-act="notedone" data-id="' + esc(ed.id) + '">' + svg(I.check, 16) + 'Done</button><button class="btn big primary x2" data-act="savejot">Save changes</button></div>'
         : '<div class="btns"><button class="btn" data-act="jotgrocery">' + svg(I.lists, 18) + 'It’s shopping</button><button class="btn big primary x2" data-act="savejot">Save</button></div>'));
   }
@@ -1275,19 +1567,20 @@
     var eaMsgs = S.data.messages.slice().sort(function (a, b) { return String(a.ts).localeCompare(String(b.ts)); });
     var lastEa = eaMsgs[eaMsgs.length - 1];
     var waiting = lastEa && lastEa.from === 'me' && lastEa.status !== 'failed' && lastEa.status !== 'answered';
-    var html = ['<div class="bubbles">' + (msgs.length ? '' : '<div class="empty">Questions about your history, lists and what needs you are answered straight away. Jobs for your EA — apply, reply, book, anything timed — go to its next run: 9am, 1pm or 6pm.</div>') + msgs.map(function (m) {
+    var html = ['<div class="bubbles">' + (msgs.length ? '' : '<div class="empty">I do everyday things straight away: reminders (just for you or for you both), the Family calendar, the shopping list, ticking off and moving jots, and answering questions about your history. For anything else I\u2019ll ask before passing it to your EA\u2019s next run. Type \u201chelp\u201d to see examples.</div>') + msgs.map(function (m) {
       var att = (m.files || []).length ? '<div class="files">' + m.files.map(function (f) { return fileChip(f, false); }).join('') + '</div>' : '';
       var res = (m.results || []).length ? '<div class="results">' + m.results.map(function (h) {
         var x = d(h.date);
         return '<button class="rcard" data-act="report" data-id="' + esc(h.id) + '"><span class="col"><span class="t">' + esc(h.title) + '</span><span class="s">' + esc((AREAS[h.module] || 'Update') + ' · ' + (x ? DOW[x.getDay()] + ' ' + x.getDate() + ' ' + MON[x.getMonth()] : '') + (h.outcome ? ' · ' + h.outcome : '')) + '</span></span><span class="chev">' + svg(I.chev, 16) + '</span></button>';
       }).join('') + '</div>' : '';
-      if (m.from === 'instant') return '<div class="bub ea instant"><div class="b">' + esc(m.text) + '</div>' + res + '<span class="m">' + svg(I.spark, 12) + ' Instant answer · ' + esc(relWhen(m.ts)) + '</span></div>';
+      var btns = (m.buttons || []).length ? (m.used ? '<div class="agused">' + svg(I.check, 14) + esc(m.used) + '</div>' : '<div class="agbtns">' + m.buttons.map(function (b, k) { return '<button class="btn small' + (k === 0 ? ' olive' : '') + '" data-act="ag" data-id="' + esc(m.id) + '" data-v="' + k + '">' + esc(b.label) + '</button>'; }).join('') + '</div>') : '';
+      if (m.from === 'instant') return '<div class="bub ea instant"><div class="b">' + esc(m.text) + '</div>' + res + btns + '<span class="m">' + svg(I.spark, 12) + ' Instant · ' + esc(relWhen(m.ts)) + '</span></div>';
       var me = m.from !== 'ea';
-      var meta = me ? (m.instant ? 'Answered instantly' : m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? 'Not sent' : m.status === 'answered' ? 'Done by your EA' : 'For your EA \u00b7 ' + runWhen().replace(/^its /, '')) : ('From your EA' + (runLabel(m.ts) ? '’s ' + runLabel(m.ts) : ''));
+      var meta = me ? (m.instant ? 'You' : m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? 'Not sent' : m.status === 'answered' ? 'Done by your EA' : 'For your EA \u00b7 ' + runWhen().replace(/^its /, '')) : ('From your EA' + (runLabel(m.ts) ? '’s ' + runLabel(m.ts) : ''));
       return '<div class="bub ' + (me ? 'me' : 'ea') + '">' + att + '<div class="b">' + esc(m.text) + '</div><span class="m">' + esc(meta) + ' · ' + esc(relWhen(m.ts)) +
         (m.status === 'failed' ? ' <button class="textbtn" data-act="retry" data-id="' + esc(m.id) + '">Try again</button>' : '') + '</span></div>';
     }).join('') + (waiting ? '<div class="runnote">' + svg(I.snooze, 14) + ' Your EA picks up jobs at ' + runWhen() + '. Questions get an instant answer.</div>' : '') + '</div>',
-    '<div class="chips wrap" aria-label="Suggestions">' + ['What needs me today?', 'What needs both of us?', 'Summarise this week', 'Latest intel', 'Shopping list'].map(function (t) {
+    '<div class="chips wrap" aria-label="Suggestions">' + ['What\u2019s next?', 'What\u2019s on tomorrow?', 'What needs both of us?', 'Shopping list', 'What can you do?'].map(function (t) {
       return '<button class="fchip" data-act="suggest" data-v="' + esc(t) + '">' + esc(t) + '</button>';
     }).join('') + '</div>'];
     return html;
@@ -1366,10 +1659,10 @@
       '<div class="card pad stack" style="box-shadow:none;gap:10px"><b>' + svg(I.bell, 16) + ' Reminders from Family EA</b>' +
       '<span class="note" style="font-size:.8125rem">Alerts come from the Family EA app itself and show the task, so you know what to do. Tap one to open the app.' + (a.devices ? ' On for ' + a.devices + ' device' + (a.devices === 1 ? '' : 's') + '.' : '') + '</span>' +
       state + '</div>' +
-      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Your day, 8am', 'What\u2019s first, then a short list, plus a thought') + asw('evening', 'Gratitude, 8pm', 'What are you grateful for? Plus what tomorrow starts with') + '</div></div>' +
-      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Gentle nudges \u00b7 only when useful, at most 3 a day</span><div class="list">' +
-      asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still to do, 5pm', 'Only if something due today was missed') +
-      asw('mindful', 'Mindful moments, 8:30 \u00b7 1pm \u00b7 8:30pm', 'One short calming practice each, separate from nudges') + asw('week', 'Week ahead, Sunday 6pm', 'What\u2019s coming up in the next 7 days') + asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Morning, 8:30', 'The first thing today and a calm line') + asw('evening', 'Evening, 8:30pm', 'Gratitude, a wind-down, and what tomorrow starts with (the week ahead on Sundays)') + '</div></div>' +
+      '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Extras \u00b7 off unless you switch them on</span><div class="list">' +
+      asw('midday', 'Midday calm, 1pm', 'A one-line reset in the middle of the day') + asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still to do, 5pm', 'Only if something due today was missed') +
+      asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Quiet hours</span><div class="opts" role="radiogroup">' + [['22-7', '10pm\u20137am'], ['21-8', '9pm\u20138am'], ['off', 'Off']].map(function (q) {
         return '<button class="opt" role="radio" aria-checked="' + ((a.quiet || '22-7') === q[0]) + '" data-act="aquiet" data-v="' + q[0] + '">' + q[1] + '</button>'; }).join('') + '</div>' +
       '<span class="note" style="font-size:.8125rem">Nothing buzzes in quiet hours. Reminders you set wait until they end.</span>' +
@@ -1591,7 +1884,8 @@
     else if (r.error) body += '<div class="note">' + (r.error === 'offline' ? 'You’re offline, so only the summary is shown.' : 'The full email isn’t available for this one, so only the summary is shown.') + '</div>';
     else {
       if ((r.blocks || []).length) body += '<section class="stack rfull"><span class="h2" style="font-size:.75rem">The full report</span>' + reportBlocks(r.blocks) + '</section>';
-      if (r.hidden) body += '<div class="note" style="font-size:.8125rem">Parts of this email meant for someone else are left out.</div>';
+      if (r.summaryOnly) body += '<div class="note" style="font-size:.8125rem">This email also had things for ' + esc(otherName()) + ', so only your part is shown here.</div>';
+      else if (r.hidden) body += '<div class="note" style="font-size:.8125rem">Parts of this email meant for someone else are left out.</div>';
       if ((r.related || []).length) body += '<section class="stack" style="gap:8px"><span class="h2" style="font-size:.75rem">Also in this email</span><div class="list">' + r.related.map(function (o) {
         return '<button class="rowbtn" data-act="report" data-id="' + esc(o.id) + '"><span class="col"><span class="t">' + esc(o.title) + '</span><span class="s">' + esc(o.summary || '') + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
       }).join('') + '</div></section>';
@@ -1783,7 +2077,7 @@
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
   function openSheet(name, item) { S.sheet = name; S.sheetItem = item || null; S.sheetFresh = true; S.unlinkAsk = false; renderOverlay(); }
-  function closeSheet() { if (S.sheet === 'breathe') clearInterval(breathTimer); S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
+  function closeSheet() { if (S.sheet === 'breathe') { clearInterval(breathTimer); Calm.stop(); } S.sheet = null; S.sheetItem = null; S.editId = null; renderOverlay(); }
 
   function toast(text, opts) {
     opts = opts || {};
@@ -1829,12 +2123,13 @@
       case 'undo': cancelAction(id); toastEl.classList.remove('show'); break;
       case 'read': item = findItem(id); if (item) toggleRead(item); break;
       case 'askabout': if (S.sheet) closeSheet(); S.draft = v; setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) { c.focus(); c.setSelectionRange(c.value.length, c.value.length); } }, 60); break;
-      case 'suggest': S.draft = v; render(); var ci = document.getElementById('chat-input'); if (ci) ci.focus(); break;
+      case 'suggest': S.draft = v; sendChat(); break;
+      case 'ag': agButton(id, v); break;
       case 'retry':
         var m = S.data.messages.filter(function (x) { return x.id === id; })[0];
         if (m) {
           S.data.messages = S.data.messages.filter(function (x) { return x !== m; }); S.localMsgs = (S.localMsgs || []).filter(function (x) { return x !== m; });
-          S.draft = /^Sent \d+ files?\.$/.test(m.text) && m.retryFiles ? '' : m.text; S.files = m.retryFiles || []; S.ref = m.retryRef || null; sendChat();
+          sendToEA(/^Sent \d+ files?\.$/.test(m.text) && m.retryFiles ? '' : m.text, m.retryFiles || [], m.retryRef || null);
         }
         break;
       case 'seg': S.seg = v; render(); break;
@@ -1879,6 +2174,8 @@
         var jt = document.getElementById('jot-text'); if (jt) jt.focus();
         break;
       case 'when': S.jotWhen = v; if (S.sheet === 'snooze' && v !== 'pick') { doSnooze(); break; } if (S.sheet === 'jot') S.jotWhenSet = true; renderOverlay(); break;
+      case 'jshare': S.jotShare = !S.jotShare; var js = document.getElementById('jot-share'); if (js) js.innerHTML = shareChips(); break;
+      case 'jcal': if (!S.jotWhen || S.jotWhen === 'none') { toast('Pick a time first, then it can go on the Family calendar.'); break; } S.jotCal = !S.jotCal; var jc = document.getElementById('jot-share'); if (jc) jc.innerHTML = shareChips(); break;
       case 'jlevel': S.jotLevel = v; S.jotLevelSet = true; var jl = document.getElementById('jot-level'); if (jl) jl.innerHTML = levelChips(); break;
       case 'editnote': if (startEdit(id)) openSheet('jot'); break;
       case 'grsharenew': S.grShare = !S.grShare; var gin = document.getElementById('gr-input'); if (gin) S.grText = gin.value; render(); break;
@@ -1886,6 +2183,7 @@
       case 'grdelete': grOp(id, 'delete'); break;
       case 'grprompt': S.grPromptIdx = (S.grPromptIdx || 0) + 1; var gin2 = document.getElementById('gr-input'); if (gin2) S.grText = gin2.value; render(); break;
       case 'breathe': startBreath(); break;
+      case 'calmsound': S.prefs.calmSound = !Calm.on(); applyPrefs(); if (Calm.on()) Calm.start(); else Calm.stop(); renderOverlay(); break;
       case 'calmdone': markCalm(calmSlot().key); render(); toast('Lovely. One calm moment done.'); break;
       case 'grmore': S.grMore = true; render(); var gi2 = document.getElementById('gr-input'); if (gi2) gi2.focus(); break;
       case 'savejot': saveJot(); break;
@@ -1894,6 +2192,7 @@
       case 'snoozenote': S.jotWhen = ''; openSheet('snooze', { kind: 'note', id: id }); break;
       case 'dosnooze': doSnooze(); break;
       case 'unsnooze': unsnooze(id); break;
+      case 'toggleday': S.showDay = !S.showDay; render(); break;
       case 'togglemissed': S.showMissed = !S.showMissed; render(); break;
       case 'togglesnoozed': S.showSnoozed = !S.showSnoozed; render(); break;
       case 'notedone': if (S.sheet === 'jot') closeSheet(); noteOp(id, 'done'); break;
@@ -1950,7 +2249,14 @@
 
   function unlink(msg) {
     flushPending();
-    LS.del('fea.key'); LS.del('fea.cache'); LS.del('fea.instant'); S.instant = []; S.reports = {};
+    // Wipe everything personal from this phone; keep only display settings (theme, text size, font).
+    try {
+      var keep = LS.get('fea.prefs', {}), disp = {}; ['theme', 'size', 'font', 'hc', 'rm', 'v2'].forEach(function (k) { if (keep[k] !== undefined) disp[k] = keep[k]; });
+      Object.keys(localStorage).filter(function (k) { return /^fea\./.test(k); }).forEach(function (k) { localStorage.removeItem(k); });
+      LS.set('fea.prefs', disp); S.prefs = Object.assign({ theme: 'auto', size: 'm', font: 'calm', hc: false, rm: false, waterGoal: 8, game: '', quotes: true }, disp);
+      sessionStorage.clear();
+    } catch (e) { LS.del('fea.key'); LS.del('fea.cache'); LS.del('fea.instant'); }
+    S.instant = []; S.reports = {}; S.water = {}; S.gHistory = []; S.localNotes = []; S.localGroceries = []; S.localGratitude = []; S.localMsgs = []; S.draft = ''; S.jotText = ''; S.grText = '';
     IDB.set('cfg', null);
     if (pushSupported() && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { return r && r.pushManager.getSubscription(); }).then(function (sub) { if (sub) sub.unsubscribe(); }).catch(function () {});
     S.key = null; S.sheet = null; S.mode = 'link'; S.linkError = msg || '';

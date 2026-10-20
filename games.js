@@ -105,7 +105,7 @@
         ['la conformité', 'compliance'], ['le risque', 'risk'], ['l’équipe', 'team'], ['améliorer', 'to improve'], ['réussir', 'to succeed'], ['oublier', 'to forget'],
         ['se souvenir de', 'to remember'], ['déménager', 'to move house'], ['le propriétaire', 'landlord / owner'], ['pourtant', 'yet / however'], ['donc', 'so / therefore']],
       qs: [
-        ['Quand j’étais petite, je ___ souvent à la plage.', 'allais', ['suis allée', 'irai', 'vais'], 'Imparfait for habits in the past: j’allais.', 'Quand j’étais petite, j’allais souvent à la plage.'],
+        ['Quand j’étais petite, j’___ souvent à la plage.', 'allais', ['irai', 'irais', 'avais'], 'Imparfait for habits in the past: j’allais.', 'Quand j’étais petite, j’allais souvent à la plage.'],
         ['Je lisais quand le téléphone ___.', 'a sonné', ['sonnait', 'sonnera', 'sonne'], 'Background in the imparfait, the interruption in the passé composé.', 'Je lisais quand le téléphone a sonné.'],
         ['L’année prochaine, nous ___ à Paris.', 'irons', ['allons aller', 'allions', 'irions'], 'Futur simple of aller: nous irons.', 'L’année prochaine, nous irons à Paris.'],
         ['Tu veux du café ? — Oui, j’___ veux bien.', 'en', ['y', 'le', 'lui'], 'En replaces du / de la / des + noun.', 'Oui, j’en veux bien.'],

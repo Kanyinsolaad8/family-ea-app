@@ -70,7 +70,8 @@
       { id: 'n3', text: 'Gift idea: cookbook for Mum', created: at(-3), remindAt: '', status: 'open', level: 'gentle' },
       { id: 'n4', text: 'Email the landlord about the boiler', created: at(-1), remindAt: '', status: 'open', level: 'normal' },
       { id: 'n5', text: 'Call the GP surgery about the letter', created: at(0, 7), remindAt: at(0, 10, 30), status: 'open', level: 'important' },
-      { id: 'n6', text: 'Pick up the dry cleaning', created: at(0, 7), remindAt: at(0, 15), status: 'open', level: 'normal' }
+      { id: 'n6', text: 'Pick up the dry cleaning', created: at(0, 7), remindAt: at(0, 15), status: 'open', level: 'normal' },
+      { id: 'n7', text: 'Collect the parcel from the depot', created: at(-1, 20), remindAt: at(1, 17), status: 'open', level: 'normal', shared: true, from: 'itunu', onCalendar: true }
     ],
     groceries: [
       { id: 'g1', name: 'Milk', qty: '2', aisle: 'Dairy & eggs', addedBy: 'itunu', created: at(-1), ticked: false },
@@ -87,7 +88,7 @@
       { id: 'gr4', person: 'itunu', day: dayKey(-1), text: 'Private to Itunu.', shared: false, created: at(-1, 21) }
     ],
     doneToday: 2,
-    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, water: true, open5: true, week: true, reply: true, mindful: true, quiet: '22-7', paused: false },
+    alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, midday: false, water: false, open5: false, reply: true, quiet: '22-7', paused: false },
     messages: [
       { id: 'd1', ts: new Date(now - 5 * 3600000).toISOString(), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
       { id: 'd2', ts: new Date(now - 3 * 3600000).toISOString(), from: 'me', text: 'Book a viewing for the Yate house next week, after work.', status: 'answered' },
@@ -144,8 +145,9 @@
           if (body.op === 'add') {
             if (!String(body.text || '').trim()) return { ok: false, error: 'empty' };
             var nid = 'n' + Date.now();
-            store.notes.push({ id: nid, text: String(body.text).trim(), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open', level: body.level || 'normal' });
-            return { ok: true, id: nid, remindAt: body.remindAt || '' };
+            var onCal = !!(body.calendar && body.remindAt);
+            store.notes.push({ id: nid, text: String(body.text).trim(), created: new Date().toISOString(), remindAt: body.remindAt || '', status: 'open', level: body.level || 'normal', shared: !!body.shared, onCalendar: onCal });
+            return { ok: true, id: nid, remindAt: body.remindAt || '', calendar: body.calendar ? onCal : undefined, calendarError: body.calendar && !onCal ? 'needs_time' : undefined };
           }
           var n = store.notes.filter(function (x) { return x.id === body.id; })[0];
           if (!n) return { ok: false, error: 'not_found' };
@@ -153,7 +155,8 @@
           if (body.op === 'undo') { n.status = 'open'; store.doneToday = Math.max(0, store.doneToday - 1); }
           if (body.op === 'snooze') n.remindAt = body.remindAt;
           if (body.op === 'delete') n.status = 'deleted';
-          if (body.op === 'edit') { if ('text' in body) n.text = String(body.text).trim(); if ('remindAt' in body) n.remindAt = body.remindAt || ''; if ('level' in body) n.level = body.level; }
+          if (n.from && ['edit', 'delete'].indexOf(body.op) > -1) return { ok: false, error: 'owner_only' };
+          if (body.op === 'edit') { if ('text' in body) n.text = String(body.text).trim(); if ('remindAt' in body) n.remindAt = body.remindAt || ''; if ('level' in body) n.level = body.level; if ('shared' in body) n.shared = !!body.shared; if ('calendar' in body) n.onCalendar = !!body.calendar && !!n.remindAt; }
           return { ok: true, id: n.id };
         }
         if (body.type === 'gratitude') {
@@ -188,7 +191,7 @@
           if (body.op !== 'clear') store.snoozes.push({ itemId: body.itemId, until: body.until });
           return { ok: true };
         }
-        if (body.type === 'prefs') { ['morning', 'evening', 'water', 'open5', 'week', 'reply', 'mindful'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
+        if (body.type === 'prefs') { ['morning', 'evening', 'midday', 'water', 'open5', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
         if (body.type === 'message') {
           var id = 'm' + Date.now();
