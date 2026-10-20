@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.7.1';
+  var VERSION = '1.7.2';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -69,7 +69,8 @@
     if (toSat === 0 && n.getHours() >= 9) toSat = 7;
     out.push(['sat', 'Saturday', at(toSat, 10), 'Later']);
     out.push(['mon', 'Monday', at((8 - dow) % 7 || 7, 8), 'Later']);
-    return out;
+    // "In 1 hour" goes when another choice lands on the same time (e.g. 14:00 at 1pm)
+    return out.filter(function (o) { return o[0] !== '1h' || !out.some(function (x) { return x !== o && Math.abs(x[2] - o[2]) < 60000; }); });
   }
   function defaultWhen() { var h = new Date().getHours(); return h < 18 ? 'eve' : 'tom'; }
   // Reads a time out of what was typed: "tomorrow morning", "tonight", "at 3pm", "Friday", "15:30".
@@ -1118,6 +1119,41 @@
       '<div class="calmbtns"><button class="btn small olive" data-act="breathe">' + svg(I.wind, 16) + 'Breathe · 1 min</button><button class="btn small" data-act="phoneaway">' + svg(I.moon, 15) + 'Phone away</button></div></section>';
   }
 
+  // ── one compact card: what's due now, then everything on "Show all"
+  function growCard() {
+    var h = habits(), k = kv('kind', {}), kindDone = k.done === todayKey(), due = dueContact(), wins = winsThisWeek();
+    var d = new Date(), recap = (d.getDay() === 5 && d.getHours() >= 17) || d.getDay() === 6 || d.getDay() === 0, open = !!S.growOpen;
+    var todo = h.list.filter(function (x) { return !habitDone(h, x.id); });
+    var rows = open ? h.list : todo;
+    var html = '<section class="card pad stack growc" aria-label="Grow"><div class="row-between"><span class="h2 growh">' + svg(I.leaf, 13) + ' Grow</span>' +
+      '<button class="textbtn" data-act="growopen" aria-expanded="' + open + '">' + (open ? 'Show less' : 'Show all') + '</button></div>';
+    // habits
+    if (!h.list.length) {
+      html += '<div class="gsec"><span class="gl">Tiny habits</span><div class="chips wrap">' + HABIT_IDEAS.slice(0, 3).map(function (x) { return '<button class="fchip" data-act="habitadd" data-v="' + esc(x) + '">' + svg(I.plus, 13) + esc(x) + '</button>'; }).join('') +
+        '</div></div>';
+    } else if (rows.length) {
+      html += '<ul class="hablist">' + rows.map(function (x) {
+        var on = habitDone(h, x.id), run = habitRun(h, x.id);
+        return '<li><button class="habit" data-act="habit" data-id="' + esc(x.id) + '" aria-pressed="' + on + '"><span class="box">' + (on ? svg(I.check, 16) : '') + '</span><span class="t">' + esc(x.name) + '</span><span class="s">' + (run ? run + '-day run' : 'Start today') + '</span></button></li>';
+      }).join('') + '</ul>';
+    } else html += '<p class="ctext soft gdone">' + svg(I.check, 15) + ' Habits done today.</p>';
+    // kindness and keeping in touch
+    html += '<div class="gsec connect">';
+    if (!kindDone) html += '<p class="ctext">' + svg(I.heart, 14) + ' ' + esc(kindToday()) + '</p><div class="calmbtns"><button class="btn small olive" data-act="kinddone">' + svg(I.check, 15) + 'Done</button><button class="textbtn" data-act="kindnew" aria-label="Another kindness idea">' + svg(I.shuffle, 18) + '</button></div>';
+    else if (open) html += '<p class="ctext soft">' + svg(I.check, 15) + ' Kindness done today. Thank you.</p>';
+    if (due) html += '<div class="callrow"><span>It\u2019s been ' + esc(gapWords(due.gap)) + ' since you spoke to <b>' + esc(due.c.name) + '</b>.</span><div class="calmbtns"><button class="btn small" data-act="called" data-id="' + esc(due.c.id) + '">Spoke to them</button><button class="textbtn" data-act="callskip">Not today</button></div></div>';
+    if (open) html += '<button class="textbtn" data-act="growsheet">' + svg(I.edit, 14) + 'Habits and people</button>';
+    html += '</div>';
+    // wins
+    html += '<div class="gsec wins"><span class="gl winh">' + svg(I.spark, 12) + (recap ? ' This week\u2019s wins' : ' Wins this week') + ' \u00b7 ' + wins.length + ' <span class="note" style="font-size:.72rem;text-transform:none;letter-spacing:0">shared with ' + esc(otherName()) + '</span></span>';
+    var show = open || recap ? wins : wins.slice(0, 1);
+    if (recap && wins.length) html += '<p class="note" style="margin:0">Look what you did this week. Which one are you proudest of?</p>';
+    if (show.length) html += '<ul class="winlist">' + show.map(function (w) { return '<li><span>' + esc(w.text) + '</span><span class="frombadge">' + (w.from ? esc(PEOPLE[w.from] || w.from) : 'You') + '</span></li>'; }).join('') + '</ul>';
+    if (open || recap) html += '<form class="addrow" id="win-form" autocomplete="off"><label class="sr" for="win-input">Add a win</label><input id="win-input" maxlength="200" enterkeyhint="done" placeholder="A win, big or small"><button class="send" type="submit" aria-label="Add the win">' + svg(I.check, 20) + '</button></form>';
+    html += '</div>';
+    return html + '</section>';
+  }
+
   // ── set-up sheet
   function growSheet() {
     var h = habits(), r = rota(), every = [[7, 'Weekly'], [14, '2 weeks'], [21, '3 weeks'], [28, 'Monthly']];
@@ -1155,6 +1191,7 @@
       case 'kindnew': var k2 = Object.assign({}, kv('kind', {})); k2.shift = (+k2.shift || 0) + 1; kvSave('kind', k2); render(); return true;
       case 'ciseen': LS.set('fea.ciSeen', checkinWeek()); render(); return true;
       case 'winsmore': S.winsOpen = true; render(); return true;
+      case 'growopen': S.growOpen = !S.growOpen; render(); return true;
       case 'addwin': var n = noteById(id); if (n) addWin('Done: ' + n.text.charAt(0).toLowerCase() + n.text.slice(1)); return true;
       case 'phoneaway': LS.set('fea.windDown', todayKey()); render(); toast('Goodnight. Everything is noted for tomorrow.'); return true;
     }
@@ -1207,9 +1244,7 @@
     var day = yourDay(all);
     html.push(day.html);
     var ci = checkinCard(); if (ci) html.push(ci);
-    html.push(habitsCard());
-    html.push(connectCard());
-    html.push(winsCard());
+    html.push(growCard());
     var qc = quoteCard(); if (qc) html.push(qc);
     html.push(waterCard());
     if (S.who === 'all') html.push(whoList(list.filter(function (x) { return day.shown.indexOf(x.id || x.title) < 0; })));
@@ -1290,7 +1325,7 @@
     // Order: the next timed thing today, then what needs you, then an untimed jot, and only then something missed.
     var next = timed.filter(function (e) { return !e.late; })[0] || null;
     var need = null;
-    if (!next) need = needsList[0] || null;
+    if (!next) need = needsList.filter(function (x) { return x.go !== 'ask'; })[0] || null;
     if (!next && !need) next = entries.filter(function (e) { return e.at === null; })[0] || timed.filter(function (e) { return e.late; }).slice(-1)[0] || null;
     var doneN = S.data.doneToday || 0, bump = doneN > S.lastDone && S.lastDone > 0; S.lastDone = doneN;
     var shown = entries.filter(function (e) { return e.kind === 'item'; }).map(function (e) { return e.id; });
@@ -1558,7 +1593,7 @@
       short: all.filter(function (i) { var s = houseState(i); return s !== 'new' && s !== 'pending' && houseDecision(i) === 'approve'; }),
       gone: all.filter(function (i) { var s = houseState(i); return s !== 'new' && s !== 'pending' && (houseDecision(i) === 'skip' || houseDecision(i) === 'never'); })
     };
-    var html = ['<div class="chips wrap" role="group" aria-label="Show">' + [['new', 'New'], ['short', 'Shortlist'], ['gone', 'Discarded']].map(function (f) {
+    var html = [askBar(), '<div class="chips wrap" role="group" aria-label="Show">' + [['new', 'New'], ['short', 'Shortlist'], ['gone', 'Discarded']].map(function (f) {
       return '<button class="fchip" data-act="hfilter" data-v="' + f[0] + '" aria-pressed="' + (S.houseFilter === f[0]) + '">' + f[1] + ' · ' + buckets[f[0]].length + '</button>';
     }).join('') + '</div>'];
     var list = buckets[S.houseFilter] || [];
@@ -1595,7 +1630,7 @@
   }
 
   function plan() {
-    var html = [whoChips(), '<div class="note">The next three weeks: your EA\u2019s finds, the Family calendar and your timed jots.</div>'];
+    var html = [askBar(), whoChips(), '<div class="note">The next three weeks: your EA\u2019s finds, the Family calendar and your timed jots.</div>'];
     var groups = planGroups();
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
@@ -1638,7 +1673,7 @@
     var mod = S.seg === 'mig' ? 'migration' : 'intel';
     var list = items(mod).sort(function (a, b) { return a.status === 'read' ? 1 : b.status === 'read' ? -1 : String(b.created).localeCompare(String(a.created)); });
     var unread = function (m) { return items(m).filter(function (i) { return i.status === 'open'; }).length; };
-    var html = ['<div class="seg segstrong" role="tablist" aria-label="Brief">' + [['mine', 'Yours', unread('intel')], ['mig', 'Migration', unread('migration')]].map(function (s) {
+    var html = [askBar(), '<div class="seg segstrong" role="tablist" aria-label="Brief">' + [['mine', 'Yours', unread('intel')], ['mig', 'Migration', unread('migration')]].map(function (s) {
       return '<button role="tab" aria-selected="' + (S.seg === s[0]) + '" data-act="seg" data-v="' + s[0] + '">' + s[1] + (s[2] ? ' <span class="segn">' + s[2] + '</span>' : '') + '</button>';
     }).join('') + '</div>',
     '<div class="note">' + (mod === 'migration' ? 'Sensitive. Shown only in the app, never in phone alerts.' : 'Your briefs, plus anything shared. Itunu’s stay private to her.') + '</div>'];
@@ -1671,7 +1706,7 @@
     var g = S.data.groceries || [], notes = S.data.notes || [];
     var toBuy = g.filter(function (x) { return !x.ticked; }), basket = g.filter(function (x) { return x.ticked; });
     var other = Object.keys(PEOPLE).filter(function (k) { return k !== S.person; }).map(function (k) { return PEOPLE[k]; })[0] || 'the family';
-    var html = ['<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Groceries · ' + toBuy.length], ['mine', 'My list · ' + openNotes().length], ['grateful', 'Grateful']].map(function (x) {
+    var html = [askBar(), '<div class="seg" role="tablist" aria-label="Lists">' + [['groceries', 'Groceries · ' + toBuy.length], ['mine', 'My list · ' + openNotes().length], ['grateful', 'Grateful']].map(function (x) {
       return '<button role="tab" aria-selected="' + (S.listSeg === x[0]) + '" data-act="listseg" data-v="' + x[0] + '">' + esc(x[1]) + '</button>';
     }).join('') + '</div>'];
     if (S.listSeg === 'groceries') {
@@ -1747,6 +1782,7 @@
     if (S.jotWhen === 'keep') { var ed = noteById(S.editId); return (ed && ed.remindAt) || ''; }
     if (S.jotWhen === 'pick') { var v = (document.getElementById('pick-time') || {}).value || S.pickTime; var t = v ? new Date(v) : null; return t && !isNaN(t) ? t.toISOString() : ''; }
     var o = whenOptions().filter(function (x) { return x[0] === S.jotWhen; })[0];
+    if (!o && S.jotWhen === '1h') return new Date(Date.now() + 3600000).toISOString();
     return o ? o[2].toISOString() : '';
   }
   function levelChips() {

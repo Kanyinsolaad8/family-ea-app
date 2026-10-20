@@ -765,3 +765,17 @@ main{gap:12px}
 .grow .chips.wrap,.sheet .chips.wrap{display:flex;flex-wrap:wrap;gap:6px}
 .grow .fchip,.sheet .chips.wrap .fchip{min-height:38px;padding:0 12px;font-size:.8125rem;width:auto;flex:0 0 auto}
 .grow .chips.wrap{flex-direction:row}
+/* v1.7.2: one Grow card, olive toast, a clear strip for the + button */
+:root{--toastBg:#2F3A1E;--toastFg:#F7F9F1}
+html.dark{--toastBg:#CCDAA8;--toastFg:#11160A}
+.toast{background:var(--toastBg);color:var(--toastFg)}
+.toast .btn{color:var(--toastFg);border-color:var(--toastFg)}
+.growc{gap:10px;background:linear-gradient(160deg,var(--surface),var(--accentSoft))}
+.gsec{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--line)}
+.gl{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--muted);display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
+.gl.winh{color:var(--gold)}
+.growc .ctext svg{color:var(--ayo)}
+.growc .gdone svg{color:var(--accent)}
+main:not(.ask) .btns,main:not(.ask) .calmbtns,main:not(.ask) .nx-btns,main:not(.ask) .cardtools{padding-right:50px}
+.growc .connect{background:none}
+.growc .fchip{padding:0 10px;font-size:.78rem}
