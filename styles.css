@@ -804,3 +804,18 @@ main:not(.ask) .btns,main:not(.ask) .calmbtns,main:not(.ask) .nx-btns,main:not(.
 .ftips li{font-size:.875rem;line-height:1.45;padding-left:14px;position:relative}
 .ftips li::before{content:"";position:absolute;left:2px;top:.6em;width:5px;height:5px;border-radius:3px;background:var(--gold)}
 .seg button{white-space:nowrap;padding:0 6px}
+/* v1.9 journal: grateful / didn't like */
+.grtabs{display:flex;gap:6px;background:rgba(255,255,255,.35);border-radius:14px;padding:3px}
+html.dark .grtabs{background:rgba(0,0,0,.2)}
+.grtabs button{flex:1;min-height:38px;border:0;border-radius:11px;background:transparent;font:inherit;font-size:.8125rem;font-weight:600;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.grtabs button[aria-selected="true"]{background:var(--surfaceSolid);color:var(--ink);box-shadow:var(--shadow)}
+.grat.vent{background:linear-gradient(160deg,var(--surface),var(--surface2))}
+.grat.vent .grh{color:var(--muted)!important}
+.vprompt svg{color:var(--muted)!important}
+.vrow .vtime{font-size:.72rem;color:var(--muted);flex-shrink:0}
+.lookback{gap:8px;background:linear-gradient(160deg,var(--surface),var(--goldSoft))}
+.lblist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.lblist li{display:flex;gap:8px;font-size:.9rem;line-height:1.4}
+.lblist .fd{width:34px;flex-shrink:0;color:var(--muted);font-weight:700}
+.grtabs button{min-height:34px}
+.grat{padding-block:12px}

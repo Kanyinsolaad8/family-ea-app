@@ -100,6 +100,10 @@
       { id: 'w2', person: 'ayo', text: 'Sorted the broadband complaint', day: dayKey(0) }
     ],
     checkins: {},
+    vents: [
+      { id: 'vt1', person: 'ayo', day: dayKey(-2), text: 'The broadband dropped twice during my call.', created: at(-2, 18) },
+      { id: 'vt2', person: 'itunu', day: dayKey(-1), text: 'Private to Itunu: train was late.', created: at(-1, 19) }
+    ],
     alerts: { topic: 'fea-ayo-demo0channel', morning: true, evening: true, midday: false, water: false, open5: false, reply: true, quiet: '22-7', paused: false },
     messages: [
       { id: 'd1', ts: new Date(now - 5 * 3600000).toISOString(), from: 'ea', text: 'Morning. Three new house matches and one calendar clash this week. Ask me anything or give me a job.' },
@@ -128,6 +132,7 @@
           queue: store.queue, messages: store.messages,
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
           snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
+          vents: (store.vents || []).filter(function (v) { return v.person === p; }).map(function (v) { return { id: v.id, day: v.day, text: v.text, created: v.created }; }),
           food: store.food || null, events: store.events, kv: Object.assign({ wins: store.wins.filter(function (w) { return w.person === p; }).map(function (w) { return { id: w.id, text: w.text, day: w.day }; }) }, store.kv[p] || {}),
           wins: store.wins.map(function (w) { return { id: w.id, text: w.text, day: w.day, from: w.person === p ? '' : w.person }; }),
           checkin: (function () { var n = new Date(); n.setDate(n.getDate() - n.getDay()); var wk = n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2); var c = store.checkins[wk] || {}, o = p === 'ayo' ? 'itunu' : 'ayo'; return { week: wk, mine: c[p] || null, theirs: c[p] && c[o] ? c[o] : null, theirsDone: !!c[o] }; })(),
@@ -208,6 +213,12 @@
         }
         if (body.type === 'prefs') { ['morning', 'evening', 'midday', 'water', 'open5', 'reply'].forEach(function (k) { if (k in body) store.alerts[k] = !!body[k]; }); if ('quiet' in body) store.alerts.quiet = body.quiet; if ('pause' in body) store.alerts.paused = !!body.pause; return { ok: true }; }
         if (body.type === 'testalert') return { ok: true };
+        if (body.type === 'vent') {
+          store.vents = store.vents || [];
+          if (body.op === 'add') { var vid = 'vt' + Date.now(); store.vents.push({ id: vid, person: p, day: dayKey(0), text: body.text, created: new Date().toISOString() }); return { ok: true, id: vid }; }
+          if (body.op === 'delete') { store.vents = store.vents.filter(function (v) { return !(v.id === body.id && v.person === p); }); return { ok: true }; }
+          return { ok: false };
+        }
         if (body.type === 'kv') {
           var nm = String(body.name || '');
           if (nm === 'food') { store.food = body.value; return { ok: true }; }

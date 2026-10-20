@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '1.8.1';
+  var VERSION = '1.9.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -272,17 +272,18 @@
   };
 
   function accept(res, startedAt) {
-    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin, food: S.data.food } : null;
+    var stale = S.gChangedAt && startedAt && startedAt < S.gChangedAt, keep = stale ? { groceries: S.data.groceries, notes: S.data.notes, snoozes: S.data.snoozes, doneToday: S.data.doneToday, gratitude: S.data.gratitude, kv: S.data.kv, wins: S.data.wins, checkin: S.data.checkin, food: S.data.food, vents: S.data.vents } : null;
     S.data = {
       items: (res.items || []).filter(function (i) { return canSee(i.for); }).map(function (i) { i.data = i.data || {}; return i; }),
       history: (res.history || []).filter(function (h) { return canSee(h.for); }),
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
-      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null
+      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || []
     };
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
     (S.localNotes || []).forEach(function (n) { if (!S.data.notes.some(function (x) { return x.id === n.id; })) S.data.notes.push(n); });
+    (S.localVents || []).forEach(function (v) { if (!S.data.vents.some(function (x) { return x.id === v.id; })) S.data.vents.push(v); });
     (S.localGratitude || []).forEach(function (g) { if (!S.data.gratitude.some(function (x) { return x.id === g.id; })) S.data.gratitude.push(g); });
     (S.localGroceries || []).forEach(function (g) { if (!S.data.groceries.some(function (x) { return x.id === g.id || (x.name.toLowerCase() === g.name.toLowerCase() && !x.ticked); })) S.data.groceries.push(g); });
     // keep optimistic chat messages that the server hasn't echoed yet
@@ -1315,6 +1316,74 @@
     return false;
   }
 
+  /* ───────── "Didn't like": a private micro-journal line next to gratitude. Always private; just let it out. ───────── */
+  var VENT_PROMPTS = ['What got on your nerves today?', 'What drained you?', 'What didn’t go the way you wanted?', 'What would you rather not repeat?', 'What felt heavy today?'];
+  function ventsToday() { return (S.data.vents || []).filter(function (v) { return v.day === todayKey(); }); }
+  function ventForm() {
+    var pr = VENT_PROMPTS[(Math.floor(Date.now() / 86400000) + (S.ventIdx || 0)) % VENT_PROMPTS.length];
+    return '<div class="grprompt vprompt"><span>' + svg(I.wind, 14) + esc(pr) + '</span><button class="textbtn" data-act="ventprompt" aria-label="Another prompt">' + svg(I.shuffle, 18) + '</button></div>' +
+      '<form class="addrow grform" id="vent-form" autocomplete="off"><label class="sr" for="vent-input">Something you didn’t like today</label>' +
+      '<input id="vent-input" maxlength="300" enterkeyhint="done" placeholder="Today I didn’t like…" value="' + esc(S.ventText || '') + '">' +
+      '<button class="send" type="submit" aria-label="Save">' + svg(I.check, 22) + '</button></form>' +
+      '<span class="grshnote">' + svg(I.leaf, 12) + ' Only you ever see these.</span>';
+  }
+  function ventRow(v) {
+    return '<li class="grrow vrow"><span class="t">' + esc(v.text) + '</span><span class="vtime">' + esc(hhmm(v.created)) + '</span>' +
+      '<button class="fx" data-act="ventdelete" data-id="' + esc(v.id) + '" aria-label="Delete: ' + esc(v.text) + '">' + svg(I.x, 16) + '</button></li>';
+  }
+  function ventPane() {
+    var mine = ventsToday();
+    return (mine.length ? '<ul class="grlist">' + mine.map(ventRow).join('') + '</ul>' + (S.ventMore ? ventForm() : '<button class="textbtn" data-act="ventmore">Add another</button>') : ventForm());
+  }
+  function addVent() {
+    var el = document.getElementById('vent-input'), text = ((el && el.value) || S.ventText || '').replace(/\s+/g, ' ').trim();
+    if (!text) { toast('One line is enough.'); return; }
+    S.gChangedAt = Date.now();
+    var lid = 'local-vt' + Date.now(), tmp = { id: lid, lid: lid, day: todayKey(), text: text, created: new Date().toISOString() };
+    S.data.vents = (S.data.vents || []).concat([tmp]); S.localVents = (S.localVents || []).concat([tmp]);
+    S.ventText = ''; S.ventMore = false; render();
+    toast('Noted. Only you can see it.');
+    api.post({ type: 'vent', op: 'add', text: text }).then(function (r) {
+      if (!r || !r.ok) throw new Error(); tmp.id = r.id; S.localVents = S.localVents.filter(function (v) { return v !== tmp; });
+    }).catch(function () {
+      S.data.vents = S.data.vents.filter(function (v) { return v !== tmp; }); S.localVents = (S.localVents || []).filter(function (v) { return v !== tmp; });
+      S.ventText = text; toast('Couldn’t save. Try again.'); render();
+    });
+  }
+  function deleteVent(id) {
+    var v = (S.data.vents || []).filter(function (x) { return x.id === id || x.lid === id; })[0]; if (!v) return;
+    S.gChangedAt = Date.now(); S.data.vents = S.data.vents.filter(function (x) { return x !== v; }); render();
+    if (String(v.id).indexOf('local-') === 0) return;
+    api.post({ type: 'vent', op: 'delete', id: v.id }).then(function (r) { if (!r || !r.ok) throw new Error(); })
+      .catch(function () { S.data.vents.push(v); toast('Couldn’t delete. Try again.'); render(); });
+  }
+  // Sunday look-back: this week's grateful and didn't-like lines side by side, private to you.
+  function lookBackCard() {
+    if (new Date().getDay() !== 0 || LS.get('fea.lbSeen', '') === todayKey()) return '';
+    var from = dayKeyOf(Date.now() - 6 * 86400000);
+    var g = (S.data.gratitude || []).filter(function (x) { return !x.from && x.day >= from; }).sort(function (a, b) { return a.day < b.day ? -1 : 1; });
+    var v = (S.data.vents || []).filter(function (x) { return x.day >= from; }).sort(function (a, b) { return a.day < b.day ? -1 : 1; });
+    if (!g.length && !v.length) return '';
+    var open = !!S.lbOpen, dname = function (d) { return DAYNAME[new Date(d + 'T12:00:00').getDay()].slice(0, 3); };
+    function list(arr) { var a = open ? arr : arr.slice(-3); return a.length ? '<ul class="lblist">' + a.map(function (x) { return '<li><span class="fd">' + dname(x.day) + '</span><span>' + esc(x.text) + '</span></li>'; }).join('') + '</ul>' : '<p class="note" style="margin:0">Nothing this week.</p>'; }
+    return '<section class="card pad stack lookback" aria-label="Your week, looking back"><div class="row-between"><span class="h2 grh">' + svg(I.history, 13) + ' Your week, looking back</span><span class="note" style="font-size:.75rem">Only you</span></div>' +
+      '<span class="gl">' + svg(I.heart, 12) + ' Grateful · ' + g.length + '</span>' + list(g) +
+      '<span class="gl">' + svg(I.wind, 12) + ' Didn’t like · ' + v.length + '</span>' + list(v) +
+      '<p class="note" style="margin:0">Anything here you want to keep, change or let go of next week?</p>' +
+      '<div class="calmbtns">' + (g.length + v.length > 6 ? '<button class="textbtn" data-act="lbopen">' + (open ? 'Show less' : 'Show the whole week') + '</button>' : '') + '<button class="textbtn" data-act="lbseen">Done</button></div></section>';
+  }
+  function ventClick(act, id) {
+    switch (act) {
+      case 'grtab': S.grTab = id === 'vent' ? 'vent' : 'grat'; render(); var f = document.getElementById(S.grTab === 'vent' ? 'vent-input' : 'gr-input'); if (f && !('ontouchstart' in window)) f.focus(); return true;
+      case 'ventprompt': S.ventIdx = (S.ventIdx || 0) + 1; var vi = document.getElementById('vent-input'); if (vi) S.ventText = vi.value; render(); return true;
+      case 'ventmore': S.ventMore = true; render(); var v2 = document.getElementById('vent-input'); if (v2) v2.focus(); return true;
+      case 'ventdelete': deleteVent(id); return true;
+      case 'lbopen': S.lbOpen = !S.lbOpen; render(); return true;
+      case 'lbseen': LS.set('fea.lbSeen', todayKey()); render(); return true;
+    }
+    return false;
+  }
+
   function today() {
     var all = needs();
     var jots = openNotes().map(function (n) { return { owner: n.shared ? 'both' : S.person, title: n.text, sub: n.remindAt ? whenLabel(n.remindAt) : 'No time set', go: 'lists', jot: true }; });
@@ -1351,6 +1420,7 @@
     html.push(day.html);
     var fc = foodCard(); if (fc) html.push(fc);
     var ci = checkinCard(); if (ci) html.push(ci);
+    var lb = lookBackCard(); if (lb) html.push(lb);
     html.push(growCard());
     var qc = quoteCard(); if (qc) html.push(qc);
     html.push(waterCard());
@@ -1443,7 +1513,7 @@
       if (next) {
         title = next.text;
         when = next.at === null ? (next.suggested ? 'Suggested for the ' + next.slot : 'When you have a moment') : next.late ? (next.earlier ? 'Was due ' + whenLabel(new Date(next.at).toISOString()) : 'Was due ' + hhmm(new Date(next.at).toISOString())) : hhmm(new Date(next.at).toISOString()) + ' · ' + inLabel(next.at);
-        tip = prepTip(next.text + ' ' + (next.sub || '')) || next.sub || 'Start with the first two-minute step.';
+        tip = next.kind === 'cal' ? next.sub : prepTip(next.text + ' ' + (next.sub || '')) || next.sub || 'Start with the first two-minute step.';
         btns = next.kind === 'note'
           ? '<button class="btn small primary" data-act="notedone" data-id="' + esc(next.id) + '">' + svg(I.check, 16) + 'Done</button><button class="btn small" data-act="editnote" data-id="' + esc(next.id) + '">' + svg(I.edit, 15) + 'Edit</button>' + dayRowBtns(next)
           : '<button class="btn small primary" data-act="go" data-v="' + esc(next.go) + '">Open</button>' + dayRowBtns(next);
@@ -1683,7 +1753,11 @@
   function gratitudeCard() {
     var mine = (S.data.gratitude || []).filter(function (g) { return !g.from && g.day === todayKey(); });
     var hr = new Date().getHours();
-    return '<section class="card pad stack grat" aria-label="Gratitude"><span class="h2 grh">' + svg(I.heart, 13) + ' Gratitude \u00b7 ' + (hr < 12 ? 'this morning' : hr < 17 ? 'so far today' : 'today') + '</span>' +
+    var vt = S.grTab === 'vent', nv = ventsToday().length;
+    var tabs = '<div class="grtabs" role="tablist" aria-label="Journal"><button role="tab" data-act="grtab" data-id="grat" aria-selected="' + !vt + '">' + svg(I.heart, 13) + ' Grateful' + (mine.length ? ' \u00b7 ' + mine.length : '') + '</button>' +
+      '<button role="tab" data-act="grtab" data-id="vent" aria-selected="' + vt + '">' + svg(I.wind, 13) + ' Didn\u2019t like' + (nv ? ' \u00b7 ' + nv : '') + '</button></div>';
+    if (vt) return '<section class="card pad stack grat vent" aria-label="Journal: didn\u2019t like">' + tabs + ventPane() + '</section>';
+    return '<section class="card pad stack grat" aria-label="Gratitude ' + (hr < 12 ? 'this morning' : hr < 17 ? 'so far today' : 'today') + '">' + tabs +
       '<b class="gq sr">' + gratQuestion() + '</b>' +
       (mine.length ? '<ul class="grlist">' + mine.map(grRow).join('') + '</ul>' + (S.grMore ? gratitudeForm() : '<button class="textbtn" data-act="grmore">Add another</button>') : gratitudeForm()) + '</section>';
   }
@@ -2505,6 +2579,7 @@
     var item;
     if (growClick(act, id, v)) return;
     if (foodClick(act, v)) return;
+    if (ventClick(act, id)) return;
     switch (act) {
       case 'tab': setTab(v); break;
       case 'openask': setTab('ask'); setTimeout(function () { var c = document.getElementById('chat-input'); if (c) c.focus(); }, 80); break;
@@ -2688,6 +2763,7 @@
   }
   function onSubmit(e) {
     if (growSubmit(e.target.id)) { e.preventDefault(); return; }
+    if (e.target.id === 'vent-form') { e.preventDefault(); addVent(); return; }
     if (e.target.id === 'chat-form') { e.preventDefault(); S.draft = document.getElementById('chat-input').value; sendChat(); }
     if (e.target.id === 'gr-form') { e.preventDefault(); addGratitude(); }
     if (e.target.id === 'g-form') { e.preventDefault(); var gi = document.getElementById('g-input'); addGrocery(gi.value); }
