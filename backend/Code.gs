@@ -350,7 +350,7 @@ function buildBootstrap_(person, now) {
       vapid: vapid_().pub,
       devices: devicesFor_(person),
       morning: alertOn_(meta, person, 'morning'), evening: alertOn_(meta, person, 'evening'),
-      water: alertOn_(meta, person, 'water'), open5: alertOn_(meta, person, 'open5'), week: alertOn_(meta, person, 'week'), reply: alertOn_(meta, person, 'reply'),
+      water: alertOn_(meta, person, 'water'), open5: alertOn_(meta, person, 'open5'), week: alertOn_(meta, person, 'week'), reply: alertOn_(meta, person, 'reply'), mindful: alertOn_(meta, person, 'mindful'),
       quiet: quietOf_(meta, person), paused: paused_(meta, person, londonDay_(now))
     }
   };
@@ -1091,6 +1091,28 @@ function quoteOfDay_(now) {
   return k + ': ' + pool[Math.floor(day / themes.length) % pool.length][1];
 }
 
+/* Mindful moments: short practices to settle the nervous system. Matches app/app.js MINDFUL. */
+var MINDFUL_ = [
+  { key: 'Am', at: 8 * 60 + 30, title: 'Morning calm', list: [
+    'Three slow breaths: in for 4, out for 6. Then choose one word for how you want today to feel.',
+    'Feet flat on the floor. Notice the ground holding you for 30 seconds before you start.',
+    'Hand on your chest, breathe into it five times. Set one small intention for the morning.',
+    'Look out of a window for a minute. Let your eyes go soft and wide before the screens begin.',
+    'Stretch tall, then let your shoulders drop. One breath in, a longer one out. Begin gently.'] },
+  { key: 'Noon', at: 13 * 60, title: 'Midday reset', list: [
+    'Two sighs: a double breath in through the nose, one long breath out through the mouth. Repeat twice.',
+    'Unclench your jaw, drop your shoulders, soften your hands. Notice what you were holding.',
+    'Box breath: in for 4, hold for 4, out for 4, hold for 4. Four rounds.',
+    'Stand up and walk for two minutes without your phone. Notice your steps.',
+    'Name three things you can hear right now. Then one breath slower than the last.'] },
+  { key: 'Pm', at: 20 * 60 + 30, title: 'Evening wind-down', list: [
+    'Breathe in for 4, hold for 7, out for 8. Three rounds to tell your body the day is done.',
+    '5-4-3-2-1: five things you see, four you feel, three you hear, two you smell, one you taste.',
+    'Lower the lights and put the phone face down. Long, slow breaths out for one minute.',
+    'Scan from your head to your feet and let each part soften as you pass it.',
+    'Let go of one thing from today you can\u2019t change. Breathe out as you let it go.'] }
+];
+
 /** Run once with your app's web address so tapping an alert opens the app. */
 function setAppUrl(url) { PropertiesService.getScriptProperties().setProperty('APP_URL', String(url)); Logger.log('App URL saved.'); }
 
@@ -1228,7 +1250,7 @@ function handlePrefs_(person, body) {
 }
 
 /* ── Gentle, flexible nudges. Each can be switched off; quiet hours hold everything; at most 3 extra nudges a day. ── */
-var ALERT_KINDS_ = ['morning', 'evening', 'water', 'open5', 'week', 'reply'];
+var ALERT_KINDS_ = ['morning', 'evening', 'water', 'open5', 'week', 'reply', 'mindful'];
 function alertOn_(meta, p, k) { var v = meta['alerts_' + k + '_' + p]; return v !== '0'; }
 function quietOf_(meta, p) { return meta['quiet_' + p] || '22-7'; }
 function inQuiet_(meta, p, hour) {
@@ -1279,6 +1301,7 @@ function bullets_(list, max) { return list.slice(0, max).map(function (x) { retu
 
 function londonDay_(d) { return Utilities.formatDate(d, 'Europe/London', 'yyyy-MM-dd'); }
 function londonHour_(d) { return +Utilities.formatDate(d, 'Europe/London', 'H'); }
+function londonMins_(d) { return londonHour_(d) * 60 + +Utilities.formatDate(d, 'Europe/London', 'm'); }
 
 function doneToday_(person, now) {
   var day = londonDay_(now);
@@ -1365,6 +1388,14 @@ function runTick_(now) {
     if (hour >= 18 && hour < 21 && Utilities.formatDate(now, 'Europe/London', 'u') === '7' && alertOn_(meta, p, 'week')) once('week', function () {
       var list = comingUp_(p, now, 7);
       if (list.length) gentle_(meta, p, day, 'Your week ahead', bullets_(list, 4));
+    });
+    // Mindful moments: one short, calming practice at 8:30, 13:00 and 20:30. Not counted in the nudge cap.
+    var mins = londonMins_(now);
+    MINDFUL_.forEach(function (m) {
+      if (mins >= m.at && mins < m.at + 120 && alertOn_(meta, p, 'mindful')) once('mindful' + m.key, function () {
+        var dayN = Math.floor((now.getTime() + 3600000) / 86400000);
+        push_(p, m.title, m.list[dayN % m.list.length]);
+      });
     });
     if (hour >= 20 && hour < 23 && alertOn_(meta, p, 'evening')) once('evening', function () {
       var n = doneToday_(p, now), tomorrow = comingUp_(p, now, 1);
