@@ -1124,3 +1124,6 @@ html.s-xl .water2 .bottle .glass{flex:none;height:38px;min-height:0;width:28px}
 details.apple summary{cursor:pointer;list-style:none;min-height:44px;align-items:center}
 details.apple summary::-webkit-details-marker{display:none}
 .asteps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:.9rem;line-height:1.5}
+/* v2.3.1 — enquiry in the app */
+.henq textarea{width:100%;box-sizing:border-box;border-radius:14px;border:1px solid var(--line);background:var(--surface2);color:var(--ink);padding:12px;font:inherit;font-size:.9375rem;line-height:1.5;resize:vertical}
+.henq .btns .btn{flex:1 1 0;min-width:0}

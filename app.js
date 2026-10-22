@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.3.0';
+  var VERSION = '2.3.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -2054,8 +2054,8 @@
 
   /* ───────── House search: one new home at a time, then a shortlist you move step by step ───────── */
   var HSTEPS = [['shortlisted', 'Shortlisted'], ['contacted', 'Agent contacted'], ['viewing', 'Viewing booked'], ['viewed', 'Viewed'], ['applied', 'Applied'], ['won', 'Got it']];
-  var HNEXT = { shortlisted: ['contacted', 'We’ve contacted the agent'], contacted: ['viewing', 'Viewing booked'], viewing: ['viewed', 'We’ve viewed it'], viewed: ['applied', 'We’ve applied'], applied: ['won', 'We got it'] };
-  var HWAIT = { shortlisted: 'Not contacted yet · your EA drafts the message for you to send', contacted: 'Waiting to hear back or book a viewing', viewing: 'Viewing booked', viewed: 'Decide whether to apply', applied: 'Waiting for the agent’s answer', won: 'Yours', lost: 'Didn’t get it' };
+  var HNEXT = { shortlisted: ['contacted', 'I’ve sent it to the agent'], contacted: ['viewing', 'Viewing booked'], viewing: ['viewed', 'We’ve viewed it'], viewed: ['applied', 'We’ve applied'], applied: ['won', 'We got it'] };
+  var HWAIT = { shortlisted: 'Enquiry ready · copy it and send it to the agent', contacted: 'Waiting to hear back or book a viewing', viewing: 'Viewing booked', viewed: 'Decide whether to apply', applied: 'Waiting for the agent’s answer', won: 'Yours', lost: 'Didn’t get it' };
   function isRejectDecision(dcs) { return dcs === 'reject' || dcs === 'skip' || dcs === 'never'; }
   function houseBucket(i) {
     var p = S.pending[i.id];
@@ -2104,6 +2104,13 @@
     var i = findItem((S.sheetItem || {}).id);
     if (!i) return sheetWrap('Home', '<div class="row-between"><h2 style="margin:0">Home</h2><button class="textbtn" data-act="closesheet">Done</button></div><div class="empty">This home is no longer in the app.</div>');
     var st = houseStage(i), nx = HNEXT[st], body = '';
+    if (houseBucket(i) === 'short' && st === 'shortlisted' && !S.pending[i.id]) {
+      var enq = houseEnquiry(i), lurl = safeUrl(i.data.listingUrl);
+      body += '<section class="card pad stack henq"><div class="row-between"><h3 class="h2" style="margin:0">Your enquiry</h3><span class="note" style="font-size:.75rem">' + (i.data.enquiry ? 'Written by your EA' : 'Ready to send') + '</span></div>' +
+        '<label class="sr" for="enq-text">Enquiry to send to the agent</label><textarea id="enq-text" rows="9" readonly>' + esc(enq) + '</textarea>' +
+        '<div class="btns"><button class="btn big primary" data-act="copyenq">' + svg(I.doc, 16) + 'Copy</button>' + (lurl ? '<a class="btn big" href="' + esc(lurl) + '" target="_blank" rel="noopener">Open listing ' + svg(I.ext, 14) + '</a>' : '') + '</div>' +
+        '<div class="note" style="font-size:.8125rem">Paste it into the listing\u2019s message box, then tap \u201cI\u2019ve sent it\u201d below.</div></section>';
+    }
     if (houseBucket(i) === 'short' || houseBucket(i) === 'finished') {
       body += '<section class="hprog card pad stack"><h3 class="h2" style="margin:0">Where you are</h3>' + hStepper(i);
       if (S.pending[i.id]) {
@@ -2116,7 +2123,7 @@
       } else if (nx) {
         body += '<button class="btn big primary hnext" data-act="hstep" data-id="' + esc(i.id) + '" data-v="' + nx[0] + '">' + svg(I.check, 18) + esc(nx[1]) + '</button>' +
           (st !== 'shortlisted' ? '<button class="btn big" data-act="hstep" data-id="' + esc(i.id) + '" data-v="lost">' + (st === 'applied' ? 'We didn\u2019t get it' : 'It\u2019s gone or we didn\u2019t get it') + '</button>' : '') +
-          (st === 'shortlisted' ? '<div class="note">Your EA drafts the enquiry for you to send. It never contacts agents itself.</div>' : '');
+          (st === 'shortlisted' ? '<div class="note">Tap this once you\u2019ve sent it. Your EA then tracks the home; it never contacts agents itself.</div>' : '');
       }
       if (houseBucket(i) === 'short' && !S.pending[i.id]) body += '<button class="textbtn hdrop" data-act="hreject" data-id="' + esc(i.id) + '">Not for us — reject this home</button>';
       body += '</section>';
@@ -2166,6 +2173,28 @@
     return '<button class="hrow" data-act="hopen" data-id="' + esc(i.id) + '"><span class="hrs">' + esc(x.score || '–') + '</span><span class="col" style="display:flex;flex-direction:column;flex:1;min-width:0;gap:2px">' +
       '<b>' + esc(hPlace(i)) + ' · ' + esc(x.price || '') + '</b><span class="note' + (nudge ? ' hwait' : '') + '" style="font-size:.8125rem">' + esc(wait) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
   }
+  // A polite, specific first message to the agent, built from what we know about the home. Only asks what the listing doesn't already say.
+  function houseEnquiry(i) {
+    var x = i.data || {};
+    if (x.enquiry) return x.enquiry;
+    var chips = (x.chips || []).join(' ').toLowerCase(), t = String(i.title || ''), place = (t.split(',')[1] || '').replace(/\u00b7.*$/, '').trim();
+    var kind = (t.split(',')[0] || 'home').replace(/^(\d)-bed/, '$1-bedroom').trim();
+    var street = String(i.summary || '').split(' \u00b7 ')[0];
+    if (/\d|£|min|available/i.test(street) || street.length > 60) street = '';
+    var portal = (String(x.listed || '').split(/\s*[\u00b7,]\s*/)[0] || '').trim();
+    var what = kind + (street ? ' on ' + street : '') + (place ? (street ? ', ' : ' in ') + place : '');
+    var qs = [];
+    if (!/available/.test(chips)) qs.push('when it\u2019s available from');
+    if (!/(driveway|garage|allocated|off-street|parking)/.test(chips)) qs.push('what the parking is (driveway, allocated space or on-street)');
+    else qs.push('whether the parking is for this home only');
+    if (/garden/.test(chips)) qs.push('whether the garden is private');
+    else if (/flat/i.test(t)) qs.push('whether there\u2019s any private outdoor space');
+    qs.push('the minimum tenancy length (we\u2019re looking for a long-term let)');
+    qs.push('when we could come and view it');
+    return 'Hello,\n\nI\u2019m interested in the ' + what + (portal ? ' listed on ' + portal : '') + (x.price ? ' at ' + x.price : '') + '.\n\n' +
+      'We\u2019re a working couple hoping to move in late November or early December.\n\nCould you let me know:\n' + qs.map(function (q) { return '\u2022 ' + q; }).join('\n') +
+      '\n\nThank you,\n' + (S.name || '');
+  }
   function hStepPost(i, stage, viewingAt) {
     if (S.pending[i.id]) { toast('One moment \u2014 still sending your last tap.'); return Promise.resolve(); }
     S.gChangedAt = Date.now();
@@ -2210,6 +2239,12 @@
       case 'hreject': if (!i) return true; closeSheet(); queueAction(i, 'reject', 'Rejected ' + hPlace(i)); return true;
       case 'hrestore': if (!i) return true; queueAction(i, 'restore', 'Brought back ' + hPlace(i)); return true;
       case 'hshowrej': S.hShowRej = !S.hShowRej; render(); return true;
+      case 'copyenq':
+        var ta = document.getElementById('enq-text'), txt = ta ? ta.value : '';
+        var done = function () { toast('Copied. Paste it into the listing\u2019s message box.'); };
+        if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(done, function () { if (ta) { ta.removeAttribute('readonly'); ta.focus(); ta.select(); } toast('Select all and copy it from the box.'); });
+        else if (ta) { ta.focus(); ta.select(); toast('Select all and copy it from the box.'); }
+        return true;
     }
     return false;
   }
