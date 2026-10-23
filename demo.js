@@ -3,6 +3,21 @@
   'use strict';
   var DAY = 86400000;
   var now = Date.now();
+  function demoTrips() {
+    var d = function (n) { return new Date(Date.now() - n * 86400000).toISOString(); };
+    var g = function (o, b) { return 'https://www.google.com/travel/flights?q=' + encodeURIComponent('Flights to YYZ from LON on ' + o + ' through ' + b + ' nonstop 2 adults') + '&hl=en-GB&gl=GB&curr=GBP'; };
+    var e = 'https://www.expedia.co.uk/Flights-Search?trip=roundtrip';
+    var pair = function (o, b, label, price, airline, first, low, hist) { return { out: o, back: b, label: label, price: price, at: hist[hist.length - 1][0], airline: airline, dropped: hist.length > 1 && price <= Math.min.apply(null, hist.slice(0, -1).map(function (x) { return x[1]; })) - 10, low: low, first: first, weekAgo: hist[0][1], hist: hist, links: { google: g(o, b), expedia: e, alternative: 'https://www.alternativeairlines.com/' } }; };
+    var by = new Date(Date.now() + 29 * 86400000), bb = by.getFullYear() + '-' + ('0' + (by.getMonth() + 1)).slice(-2) + '-' + ('0' + by.getDate()).slice(-2);
+    return [{ id: 'toronto27', title: 'Toronto, Easter 2027', from: 'London (Heathrow or Gatwick)', to: 'Toronto Pearson', people: 2, nonstop: true, bookBy: bb,
+      note: 'London, Ontario is about 2 hours by car or train from Pearson.', bestKey: '2027-03-25_2027-04-01', updated: d(0.2),
+      pairs: [
+        pair('2027-03-25', '2027-04-01', 'Thu 25 Mar – Thu 1 Apr', 905, 'British Airways', 946, 905, [[d(9), 946], [d(6), 958], [d(4), 931], [d(0.2), 905]]),
+        pair('2027-03-25', '2027-04-02', 'Thu 25 Mar – Fri 2 Apr', 946, 'Air Canada', 946, 946, [[d(9), 946]]),
+        pair('2027-03-26', '2027-04-01', 'Fri 26 Mar – Thu 1 Apr', 1216, 'Air Transat', 1216, 1198, [[d(9), 1216], [d(3), 1198], [d(1), 1216]]),
+        pair('2027-03-26', '2027-04-02', 'Fri 26 Mar – Fri 2 Apr', 1256, 'Air Transat', 1256, 1256, [[d(9), 1256]])
+      ] }];
+  }
   function at(days, h, m) { var d = new Date(now + days * DAY); d.setHours(h || 9, m || 0, 0, 0); return d.toISOString(); }
   function monthsAgo(n, day) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); d.setDate(Math.min(day, 28)); d.setHours(10, 0, 0, 0); return d.toISOString(); }
   function dayKey(days) { var d = new Date(now + days * DAY); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
@@ -140,6 +155,7 @@
             .sort(function (a, b) { return a.date < b.date ? 1 : -1; }),
           queue: store.queue, messages: store.messages,
           appleNew: store.appleNew || [],
+          trips: demoTrips(),
           notes: store.notes.filter(function (n) { return n.status !== 'deleted'; }), groceries: store.groceries.filter(function (g) { return !g.removed; }),
           snoozes: store.snoozes.filter(function (z) { return Date.parse(z.until) > Date.now(); }), doneToday: store.doneToday, alerts: store.alerts,
           vents: (store.vents || []).filter(function (v) { return v.person === p; }).map(function (v) { return { id: v.id, day: v.day, text: v.text, created: v.created }; }),

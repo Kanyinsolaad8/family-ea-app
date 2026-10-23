@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.3.1';
+  var VERSION = '2.4.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -188,6 +188,7 @@
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
     chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
     chev: '<path d="M9 6l6 6-6 6"/>',
+    plane: '<path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
     send: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
     cog: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
@@ -281,7 +282,7 @@
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
-      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || [], appleNew: res.appleNew || []
+      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || [], appleNew: res.appleNew || [], trips: (res.trips || []).filter(function (t) { return t && t.pairs && t.pairs.length; })
     };
     if (keep) S.data.items.forEach(function (i) { var o = oldHouses[i.id]; if (o) { i.data = o.data; i.status = o.status; } });
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
@@ -1499,6 +1500,7 @@
     if (checkinCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="checkin">' + svg(I.heart, 16) + '<span><b>Weekly check-in</b><small>' + (c.week === wk && c.mine ? (c.theirs ? 'You’ve both answered — have a look' : 'Waiting for ' + esc(otherName())) : 'Three short questions for you both') + '</small></span>' + svg(I.chev, 16) + '</button>');
     var an = (S.data.appleNew || []).length;
     if (an) out.push('<button class="notice t-in" data-act="tilesheet" data-v="apple">' + svg(I.bell, 16) + '<span><b>From Apple Reminders \u00b7 ' + an + ' new</b><small>Check where they went</small></span>' + svg(I.chev, 16) + '</button>');
+    var tn = tripNews(); if (tn) out.push('<button class="notice t-in" data-act="tilesheet" data-v="trip">' + svg(I.plane, 16) + '<span><b>Flights got cheaper \u00b7 ' + gbp(tn.p.price) + ' for ' + tn.t.people + '</b><small>' + esc(tn.t.title.split(',')[0] + ', ' + tn.p.label) + '</small></span>' + svg(I.chev, 16) + '</button>');
     if (lookBackCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="lookback">' + svg(I.history, 16) + '<span><b>Your week, looking back</b><small>Grateful and didn’t-like lines, only you</small></span>' + svg(I.chev, 16) + '</button>');
     return out.join('');
   }
@@ -1514,6 +1516,7 @@
     else if (k === 'lookback') { title = 'Looking back'; body = lookBackCard(); }
     else if (k === 'calm') { title = 'Calm'; body = calmCard(); }
     else if (k === 'apple') { title = 'From Apple Reminders'; body = appleSheetBody(); }
+    else if (k === 'trip') { var tt = (S.data.trips || [])[0]; title = tt ? tt.title : 'Trip'; body = tripSheetBody(tt); }
     return sheetWrap(title, '<div class="row-between"><h2 style="margin:0;font-size:1.3rem">' + esc(title) + '</h2><button class="textbtn" data-act="closesheet">Done</button></div>' + body);
   }
   function today() {
@@ -2253,8 +2256,67 @@
       .map(function (i) { return { hv: true, id: 'hv-' + i.id, hid: i.id, title: 'Viewing: ' + hPlace(i), due: i.data.viewingAt, for: 'both', price: i.data.price }; });
   }
 
+  /* ── Trips: flight prices from Google Flights alerts, read by the back end ── */
+  function gbp(n) { return '£' + Math.round(+n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function tripBest(t) { return (t.pairs || []).filter(function (p) { return p.out + '_' + p.back === t.bestKey; })[0] || (t.pairs || [])[0] || null; }
+  function tripDaysTo(iso) { var p = String(iso || '').split('-'), t = new Date(+p[0], +p[1] - 1, +p[2]), n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); }
+  function tripMove(p) {
+    if (!p || p.first === null || p.first === undefined || !p.price) return '';
+    var dlt = p.price - p.first;
+    return dlt < 0 ? '<span class="tdown">' + gbp(-dlt) + ' cheaper</span> than when tracking began' : dlt > 0 ? '<span class="tup">' + gbp(dlt) + ' dearer</span> than when tracking began' : 'Same price as when tracking began';
+  }
+  function spark(hist) {
+    if (!hist || hist.length < 2) return '';
+    var v = hist.map(function (h) { return +h[1]; }), lo = Math.min.apply(null, v), hi = Math.max.apply(null, v), w = 120, h = 32, span = (hi - lo) || 1;
+    var pts = v.map(function (x, i) { return (i * w / (v.length - 1)).toFixed(1) + ',' + (h - 3 - (x - lo) / span * (h - 6)).toFixed(1); }).join(' ');
+    return '<svg class="tspark" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" aria-hidden="true"><polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function tripNews() {
+    var t = (S.data.trips || [])[0]; if (!t) return null;
+    var hit = null;
+    (t.pairs || []).forEach(function (p) {
+      if (p.dropped && p.price && (!hit || p.price < hit.price)) hit = p; // the back end decides what counts as a real drop
+    });
+    return hit ? { t: t, p: hit } : null;
+  }
+  function bookByLine(t) {
+    var n = tripDaysTo(t.bookBy);
+    return n >= 0 ? 'Google expects the best prices until ' + esc(tripDayLabel(t.bookBy)) + ' · ' + (n === 0 ? 'last day' : n + ' day' + (n === 1 ? '' : 's') + ' left') : 'Past Google’s best-price window. Book when it suits you.';
+  }
+  function tripDayLabel(iso) { var p = String(iso).split('-'); return +p[2] + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+p[1] - 1]; }
+  function tripCards() {
+    return (S.data.trips || []).map(function (t) {
+      var b = tripBest(t); if (!b) return '';
+      var g = safeUrl((b.links || {}).google);
+      return '<article class="card trip"><div class="tags"><span class="tag t-cal">' + svg(I.plane, 11) + ' Flight watch</span>' + ochip('both') + '</div>' +
+        '<b class="ttitle">' + esc(t.title) + '</b><div class="note" style="font-size:.8125rem">' + esc(t.from + ' → ' + t.to + (t.nonstop ? ' · nonstop' : '') + ' · ' + t.people + ' people, return') + '</div>' +
+        '<div class="tprice"><b>' + gbp(b.price) + '</b><span>for ' + t.people + '</span>' + spark(b.hist) + '</div>' +
+        '<div class="note" style="font-size:.8125rem">Cheapest dates: ' + esc(b.label) + (b.airline ? ' · ' + esc(b.airline) : '') + '</div>' +
+        '<div class="note" style="font-size:.8125rem">' + tripMove(b) + '</div>' +
+        '<div class="tby">' + bookByLine(t) + '</div>' +
+        '<div class="btns" style="justify-content:flex-start"><button class="btn small primary" style="flex:0 0 auto" data-act="tilesheet" data-v="trip">All ' + (t.pairs || []).length + ' date options</button>' +
+        (g ? '<a class="btn small" style="flex:0 0 auto" href="' + esc(g) + '" target="_blank" rel="noopener">Google Flights ' + svg(I.ext, 14) + '</a>' : '') + '</div></article>';
+    }).join('');
+  }
+  function tripSheetBody(t) {
+    if (!t) return '<div class="empty">No trip being tracked.</div>';
+    var rows = (t.pairs || []).slice().sort(function (a, b) { return (a.price || 9e9) - (b.price || 9e9); }).map(function (p) {
+      var L = p.links || {}, g = safeUrl(L.google), e = safeUrl(L.expedia), best = p.out + '_' + p.back === t.bestKey;
+      return '<div class="tpair' + (best ? ' best' : '') + '"><div class="row-between"><b>' + esc(p.label) + '</b><b class="tp">' + (p.price ? gbp(p.price) : '–') + '</b></div>' +
+        '<div class="note" style="font-size:.8125rem">' + esc((p.airline ? p.airline + ' · ' : '') + 'nonstop') + (best ? ' · <b>cheapest</b>' : '') + (p.low && p.low < p.price ? ' · lowest seen ' + gbp(p.low) : '') + '</div>' +
+        '<div class="note" style="font-size:.8125rem">' + tripMove(p) + '</div>' +
+        '<div class="btns" style="justify-content:flex-start">' + (g ? '<a class="btn small" style="flex:0 0 auto" href="' + esc(g) + '" target="_blank" rel="noopener">Google Flights ' + svg(I.ext, 14) + '</a>' : '') +
+        (e ? '<a class="btn small" style="flex:0 0 auto" href="' + esc(e) + '" target="_blank" rel="noopener">Expedia <span class="klarna">Klarna?</span> ' + svg(I.ext, 14) + '</a>' : '') + '</div></div>';
+    }).join('');
+    var upd = t.updated ? new Date(t.updated) : null;
+    return '<div class="note">' + esc(t.from + ' → ' + t.to + ' · nonstop · ' + t.people + ' people, return. Prices are for both of you.') + '</div>' +
+      '<div class="tby">' + bookByLine(t) + '</div>' + rows +
+      '<div class="card pad stack" style="box-shadow:none;gap:6px"><b><span class="klarna">Klarna</span> Paying in parts</b><span class="note" style="font-size:.8125rem">Some booking sites offer Klarna at checkout, usually as Pay in 3. <a href="https://www.alternativeairlines.com/" target="_blank" rel="noopener">Alternative Airlines</a> offers it for UK bookings. Expedia may, depending on the booking: if it’s available, you’ll see it at the payment step. Klarna does its own check first, and it isn’t covered by Section 75, so read the terms before you choose it.</span></div>' +
+      '<div class="note" style="font-size:.8125rem">' + esc(t.note || '') + ' Prices come from Google Flights alerts to your EA' + (upd && !isNaN(upd) ? ', last updated ' + upd.getDate() + ' ' + MON[upd.getMonth()] : '') + '.</div>';
+  }
   function plan() {
     var html = [askBar(), whoChips(), '<div class="note">The next three weeks: your EA\u2019s finds, the Family calendar and your timed jots.</div>'];
+    var tc = tripCards(); if (tc) html.push(tc);
     var groups = planGroups();
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
@@ -2611,6 +2673,7 @@
       '<span class="note" style="font-size:.8125rem">Alerts come from the Family EA app itself and show the task, so you know what to do. Tap one to open the app.' + (a.devices ? ' On for ' + a.devices + ' device' + (a.devices === 1 ? '' : 's') + '.' : '') + '</span>' +
       state + '</div>' +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Daily</span><div class="list">' + asw('morning', 'Morning, 8:30', 'The first thing today and a calm line') + asw('evening', 'Evening, 8:30pm', 'Gratitude, a wind-down, and what tomorrow starts with (the week ahead on Sundays)') + '</div></div>' +
+      ((S.data.trips || []).length ? '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Trips</span><div class="list">' + asw('flights', 'Flight prices', 'When a tracked trip gets cheaper, and a short round-up on Monday mornings') + '</div></div>' : '') +
       '<div class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Extras \u00b7 off unless you switch them on</span><div class="list">' +
       asw('midday', 'Midday calm, 1pm', 'A one-line reset in the middle of the day') + asw('water', 'Water check, 3pm', 'Only if you\u2019re behind on glasses') + asw('open5', 'Still to do, 5pm', 'Only if something due today was missed') +
       asw('reply', 'When your EA replies', 'So you don\u2019t have to keep checking') + '</div></div>' +

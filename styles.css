@@ -1127,3 +1127,18 @@ details.apple summary::-webkit-details-marker{display:none}
 /* v2.3.1 — enquiry in the app */
 .henq textarea{width:100%;box-sizing:border-box;border-radius:14px;border:1px solid var(--line);background:var(--surface2);color:var(--ink);padding:12px;font:inherit;font-size:.9375rem;line-height:1.5;resize:vertical}
 .henq .btns .btn{flex:1 1 0;min-width:0}
+
+/* v2.4 Flight watch */
+.card.trip{padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.card.trip .ttitle{font-size:1.0625rem}
+.tprice{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.tprice b{font-size:2rem;line-height:1;letter-spacing:-.02em}
+.tprice span{color:var(--muted);font-size:.875rem}
+.tspark{color:var(--accent);margin-left:auto;align-self:center;max-width:40%}
+.tby{font-size:.8125rem;font-weight:600;color:var(--accentInk);background:var(--accentSoft);border-radius:12px;padding:6px 10px;align-self:flex-start}
+.tdown{color:var(--good);font-weight:700}
+.tup{font-weight:700}
+.tpair{display:flex;flex-direction:column;gap:4px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface2)}
+.tpair.best{border-color:var(--accent)}
+.tpair .tp{font-size:1.125rem}
+.klarna{display:inline-block;font-size:.6875rem;font-weight:800;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:#FFB3C7;color:#17120F;vertical-align:1px}
