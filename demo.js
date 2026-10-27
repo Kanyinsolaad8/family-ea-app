@@ -18,6 +18,7 @@
         pair('2027-03-26', '2027-04-02', 'Fri 26 Mar – Fri 2 Apr', 1256, 'Air Transat', 1256, 1256, [[d(9), 1256]])
       ] }];
   }
+  function inH(h) { return new Date(Date.now() + h * 3600000).toISOString(); }
   function at(days, h, m) { var d = new Date(now + days * DAY); d.setHours(h || 9, m || 0, 0, 0); return d.toISOString(); }
   function monthsAgo(n, day) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); d.setDate(Math.min(day, 28)); d.setHours(10, 0, 0, 0); return d.toISOString(); }
   function dayKey(days) { var d = new Date(now + days * DAY); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
@@ -26,17 +27,25 @@
   var store = {
     items: [
       { id: 'h-yate', module: 'houses', for: 'both', status: 'open', title: '3-bed semi, Yate BS37', created: at(-1), data: {
-        price: '£1,150 pcm', score: 86, listed: 'Rightmove · listed yesterday', chips: ['Private garden', 'Driveway', '34 min to BS1'],
+        expiresAt: inH(19), price: '£1,150 pcm', score: 86, listed: 'Rightmove · listed yesterday', chips: ['Private garden', 'Driveway', '34 min to BS1'],
         why: 'Garden and driveway both confirmed in photos. Quiet cul-de-sac on a bus route.', lifestyle: 'Gym 0.6 mi · Swimming pool 1.2 mi',
         rows: [['Location', 26, 30], ['Commute', 17, 20], ['Must-haves', 30, 30], ['Nice-to-haves', 13, 20]], listingUrl: 'https://www.rightmove.co.uk/', mapUrl: 'https://maps.google.com/' } },
       { id: 'h-keyn', module: 'houses', for: 'both', status: 'open', title: '2-bed terrace, Keynsham BS31', created: at(-2), data: {
-        price: '£1,095 pcm', score: 81, listed: 'Zoopla · listed 2 days ago', chips: ['Rear garden', '1 parking space', '28 min to BS1'],
+        expiresAt: inH(5), price: '£1,095 pcm', score: 81, listed: 'Zoopla · listed 2 days ago', chips: ['Rear garden', '1 parking space', '28 min to BS1'],
         why: 'Shortest commute this week. Parking is one allocated space, not a driveway.', lifestyle: 'Gym 0.3 mi · Swimming pool 0.9 mi',
         rows: [['Location', 25, 30], ['Commute', 18, 20], ['Must-haves', 26, 30], ['Nice-to-haves', 12, 20]], listingUrl: 'https://www.zoopla.co.uk/', mapUrl: 'https://maps.google.com/' } },
       { id: 'h-thorn', module: 'houses', for: 'both', status: 'open', title: '3-bed end-terrace, Thornbury BS35', created: at(0), data: {
-        price: '£1,195 pcm', score: 78, listed: 'OnTheMarket · listed today', chips: ['Private garden', 'Driveway', '41 min to BS1'],
+        expiresAt: inH(44), price: '£1,195 pcm', score: 78, listed: 'OnTheMarket · listed today', chips: ['Private garden', 'Driveway', '41 min to BS1'],
         why: 'Biggest garden of the week. Close to the £1,200 ceiling, so little room on price.', lifestyle: 'Gym 1.4 mi · Swimming pool 1.6 mi',
         rows: [['Location', 23, 30], ['Commute', 14, 20], ['Must-haves', 30, 30], ['Nice-to-haves', 11, 20]], listingUrl: 'https://www.onthemarket.com/', mapUrl: 'https://maps.google.com/' } },
+      { id: 'h-swin', module: 'houses', for: 'both', status: 'open', title: '2-bed flat, Swindon SN1', created: at(0), data: {
+        expiresAt: inH(30), price: '£950 pcm', score: 77, listed: 'Rightmove · listed today', chips: ['Allocated parking', 'Top floor', '54 min to BS1', 'Bills included: water, broadband'],
+        why: 'Well under budget and a top-floor flat. Train to Bristol is 39 minutes from Swindon station.', lifestyle: 'Gym 0.4 mi · Swimming pool 1.1 mi',
+        rows: [['Location', 25, 30], ['Commute', 12, 20], ['Must-haves', 30, 30], ['Nice-to-haves', 10, 20]], listingUrl: 'https://www.rightmove.co.uk/', mapUrl: 'https://maps.google.com/' } },
+      { id: 'h-chelm', module: 'houses', for: 'both', status: 'open', title: '2-bed flat, Chelmsford CM1 · London side', created: at(0), data: {
+        expiresAt: inH(40), price: '£1,375 pcm', score: 74, listed: 'OnTheMarket · listed today', chips: ['Allocated parking', 'EPC B', '52 min to EC2M'],
+        why: 'Fast train to Liverpool Street, newly refurbished, quiet street with low crime. £25 over the ideal London price.', lifestyle: 'Gym 0.5 mi · Swimming pool 0.8 mi',
+        rows: [['Location', 25, 30], ['Commute', 20, 20], ['Must-haves', 23, 30], ['Nice-to-haves', 6, 20]], listingUrl: 'https://www.onthemarket.com/', mapUrl: 'https://maps.google.com/' } },
       { id: 'h-port', module: 'houses', for: 'both', status: 'done', title: '3-bed semi, Portishead BS20', created: at(-6), outcome: 'In the tracker', summary: 'Down Road · £1,175 pcm · 31 min to BS1', data: {
         price: '£1,175 pcm', score: 84, listed: 'Rightmove', chips: ['Private garden', 'Driveway', '31 min to BS1'], decision: 'approve', stage: 'viewing', viewingAt: at(2, 10, 30),
         stages: [{ s: 'shortlisted', at: at(-6) }, { s: 'contacted', at: at(-5) }, { s: 'viewing', at: at(-3) }],

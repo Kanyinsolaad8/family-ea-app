@@ -1142,3 +1142,12 @@ details.apple summary::-webkit-details-marker{display:none}
 .tpair.best{border-color:var(--accent)}
 .tpair .tp{font-size:1.125rem}
 .klarna{display:inline-block;font-size:.6875rem;font-weight:800;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:#FFB3C7;color:#17120F;vertical-align:1px}
+
+/* v2.5 House search: area tabs, 48-hour countdown, swipe */
+.hareas .fchip{display:inline-flex;align-items:center;gap:6px}
+.hac{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--surface2);color:var(--ink);font-size:.75rem;font-weight:700}
+.fchip[aria-pressed="true"] .hac{background:var(--accentSoft);color:var(--accentInk)}
+.hleft{display:flex;width:fit-content;align-items:center;gap:6px;margin-bottom:10px;padding:4px 10px;border-radius:12px;background:var(--surface2);color:var(--muted);font-size:.8125rem;font-weight:600}
+.hleft.soon{background:var(--warnSoft);color:var(--warn)}
+.hswipe{text-align:center;font-size:.75rem;margin-top:-4px}
+.hcard{touch-action:pan-y}

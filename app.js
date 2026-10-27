@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.4.0';
+  var VERSION = '2.5.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -2069,11 +2069,30 @@
     return 'new';
   }
   function houseStage(i) { return (S.pending[i.id] && S.pending[i.id].action === 'approve') ? 'shortlisted' : (i.data.stage || 'shortlisted'); }
+  // A new home waits 48 hours for a decision (the back end sets expiresAt), then moves to History.
+  function hLeft(i) { var e = Date.parse((i.data || {}).expiresAt || ''); return isNaN(e) ? null : (e - Date.now()) / 3600000; }
   function houseNew() {
-    return items('houses').filter(function (i) { return houseBucket(i) === 'new'; })
+    return items('houses').filter(function (i) { var l = hLeft(i); return houseBucket(i) === 'new' && (l === null || l > 0 || S.pending[i.id]); })
       .sort(function (a, b) { return (+b.data.score || 0) - (+a.data.score || 0); });
   }
   function houseShort() { return items('houses').filter(function (i) { return houseBucket(i) === 'short'; }); }
+  // Area tabs: by the home's own town (postcode area), with the London and Manchester sides kept whole.
+  var AREA_PC = { BS: 'Bristol', BA: 'Bath', SN: 'Swindon', GL: 'Gloucester', NP: 'Newport', CF: 'Cardiff', M: 'Manchester', SK: 'Manchester', OL: 'Manchester', BL: 'Manchester', WN: 'Manchester', WA: 'Manchester', PR: 'Manchester',
+    E: 'London', EC: 'London', N: 'London', NW: 'London', SE: 'London', SW: 'London', W: 'London', WC: 'London' };
+  var AREA_ORDER = ['Bristol', 'Bath', 'Swindon', 'Gloucester', 'Newport', 'Cardiff', 'Manchester', 'London'];
+  function hArea(i) {
+    var t = String(i.title || '');
+    if (/\u00b7\s*London side/i.test(t)) return 'London';
+    if (/\u00b7\s*Manchester side/i.test(t)) return 'Manchester';
+    var m = t.replace(/\u00b7.*$/, '').trim().match(/\b([A-Z]{1,2})\d{1,2}[A-Z]?$/);
+    if (m && AREA_PC[m[1]]) return AREA_PC[m[1]];
+    return hPlace(i).replace(/\s+[A-Z]{1,2}\d.*$/, '') || 'Other';
+  }
+  function hAreas(list) {
+    var c = {}; list.forEach(function (i) { var a = hArea(i); c[a] = (c[a] || 0) + 1; });
+    return Object.keys(c).sort(function (a, b) { var x = AREA_ORDER.indexOf(a), y = AREA_ORDER.indexOf(b); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y) || a.localeCompare(b); }).map(function (a) { return [a, c[a]]; });
+  }
+  function inArea(i) { return !S.hArea || S.hArea === 'all' || hArea(i) === S.hArea; }
   function hPlace(i) { return (i.title.split(',')[1] || i.title).replace(/·.*$/, '').trim(); }
   function viewingLabel(iso) { var t = d(iso); return t ? DOW[t.getDay()] + ' ' + t.getDate() + ' ' + MON[t.getMonth()] + ' at ' + hhmm(iso) : ''; }
   function houseDetail(i, inSheet) {
@@ -2134,19 +2153,25 @@
     return sheetWrap(i.title, '<div class="row-between"><h2 style="margin:0;font-size:1.2rem">' + esc(hPlace(i)) + '</h2><button class="textbtn" data-act="closesheet">Done</button></div>' + body + '<article class="card house">' + houseDetail(i, true) + attachBtn(i) + '</article>');
   }
   function houses() {
-    var all = items('houses'), fresh = houseNew(), shortl = houseShort();
+    var all = items('houses'), fresh0 = houseNew(), short0 = houseShort();
+    var areas = hAreas(fresh0.concat(short0));
+    if (S.hArea && S.hArea !== 'all' && !areas.some(function (a) { return a[0] === S.hArea; })) { S.hArea = 'all'; S.hIdx = 0; }
+    var fresh = fresh0.filter(inArea), shortl = short0.filter(inArea);
     var rejected = all.filter(function (i) { return houseBucket(i) === 'rejected'; }), finished = all.filter(function (i) { return houseBucket(i) === 'finished'; });
     var html = [askBar()];
+    if (areas.length > 1) html.push('<div class="chips hareas" role="group" aria-label="Show homes in">' + [['all', 'All', fresh0.length + short0.length]].concat(areas.map(function (a) { return [a[0], a[0], a[1]]; })).map(function (a) {
+      return '<button class="fchip" data-act="harea" data-v="' + esc(a[0]) + '" aria-pressed="' + ((S.hArea || 'all') === a[0]) + '">' + esc(a[1]) + ' <span class="hac">' + a[2] + '</span></button>';
+    }).join('') + '</div>');
     // 1. New homes, one at a time
     if (S.hIdx >= fresh.length) S.hIdx = Math.max(0, fresh.length - 1);
     var cur = fresh[S.hIdx || 0];
     html.push('<section class="stack" aria-label="New homes"><div class="row-between hbar"><h2 class="h2">' + (fresh.length ? 'New homes' : 'New homes · none') + '</h2>' +
       (fresh.length ? '<div class="hnav"><button class="hnb" data-act="hprev" aria-label="Previous home"' + (S.hIdx > 0 ? '' : ' disabled') + '>' + svg('<path d="M15 6l-6 6 6 6"/>', 18) + '</button><b class="hcount" aria-live="polite">' + ((S.hIdx || 0) + 1) + ' of ' + fresh.length + '</b><button class="hnb" data-act="hnext" aria-label="Next home"' + (S.hIdx < fresh.length - 1 ? '' : ' disabled') + '>' + svg(I.chev, 18) + '</button></div>' : '') + '</div>');
-    if (!cur) html.push('<div class="empty">You’re all caught up. Your EA searches every day around 12:30 and 4:30pm.</div>');
-    else html.push('<article class="card house hcard' + (S.hAnim ? ' h-' + S.hAnim : '') + '" data-id="' + esc(cur.id) + '">' + houseDetail(cur) + attachBtn(cur) +
+    if (!cur) html.push('<div class="empty">' + (S.hArea && S.hArea !== 'all' ? 'No new homes in ' + esc(S.hArea) + ' right now.' : 'You’re all caught up. Your EA searches every day around 12:30 and 4:30pm.') + '</div>');
+    else html.push('<article class="card house hcard' + (S.hAnim ? ' h-' + S.hAnim : '') + '" data-id="' + esc(cur.id) + '">' + hLeftLine(cur) + houseDetail(cur) + attachBtn(cur) +
       '<div class="hdecide"><button class="btn big hrej" data-act="hdecide" data-id="' + esc(cur.id) + '" data-v="reject">' + svg('<path d="M6 6l12 12M18 6L6 18"/>', 18) + 'Reject</button>' +
       '<button class="btn big primary hok" data-act="hdecide" data-id="' + esc(cur.id) + '" data-v="approve">' + svg(I.check, 18) + 'Shortlist</button></div></article>');
-    if (fresh.length > 1) html.push('<div class="hpager" aria-hidden="true">' + fresh.slice(0, 12).map(function (x, k) { return '<i class="' + (k === S.hIdx ? 'on' : '') + '"></i>'; }).join('') + '</div>');
+    if (fresh.length > 1) html.push('<div class="hpager" aria-hidden="true">' + fresh.slice(0, 12).map(function (x, k) { return '<i class="' + (k === S.hIdx ? 'on' : '') + '"></i>'; }).join('') + '</div><div class="note hswipe">Swipe the card for the next home</div>');
     html.push('</section>');
     S.hAnim = '';
     // 2. Shortlist, grouped by step
@@ -2168,6 +2193,11 @@
         }).join('') + '</div>' : '') + '</section>');
     }
     return html;
+  }
+  function hLeftLine(i) {
+    var l = hLeft(i); if (l === null || S.pending[i.id]) return '';
+    var h = Math.max(1, Math.ceil(l));
+    return '<div class="hleft' + (h <= 6 ? ' soon' : '') + '">' + svg('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/>', 14) + (h <= 1 ? 'Under an hour left to decide' : h + ' hours left to decide') + '</div>';
   }
   function hRow(i) {
     var st = houseStage(i), x = i.data || {};
@@ -2219,8 +2249,9 @@
   function houseClick(act, id, v, el) {
     var i = id ? findItem(id) : null, reduce = document.documentElement.classList.contains('rm') || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
     switch (act) {
-      case 'hprev': S.hIdx = Math.max(0, (S.hIdx || 0) - 1); S.hAnim = 'back'; render(); return true;
-      case 'hnext': S.hIdx = (S.hIdx || 0) + 1; S.hAnim = 'fwd'; render(); return true;
+      case 'hprev': if (!(S.hIdx > 0)) return true; S.hIdx = S.hIdx - 1; S.hAnim = 'back'; render(); return true;
+      case 'hnext': if ((S.hIdx || 0) >= houseNew().filter(inArea).length - 1) return true; S.hIdx = (S.hIdx || 0) + 1; S.hAnim = 'fwd'; render(); return true;
+      case 'harea': S.hArea = v; S.hIdx = 0; S.hAnim = ''; render(); return true;
       case 'hdecide':
         if (!i || S.pending[i.id]) return true;
         var go = function () { S.hAnim = 'fwd'; queueAction(i, v, (v === 'approve' ? 'Shortlisted ' : 'Rejected ') + hPlace(i)); };
@@ -3319,12 +3350,27 @@
     if (e.key === 'Escape' && S.sheet) closeSheet();
   }
 
+  // Swipe a new-home card left or right to move between homes (buttons and links still work as normal taps).
+  function houseSwipe() {
+    var st = null;
+    document.addEventListener('touchstart', function (e) {
+      var c = e.target && e.target.closest ? e.target.closest('.hcard') : null;
+      st = c && e.touches.length === 1 && !e.target.closest('textarea,input') ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    }, { passive: true });
+    document.addEventListener('touchend', function (e) {
+      if (!st || S.tab !== 'houses') { st = null; return; }
+      var t = e.changedTouches[0], dx = t.clientX - st.x, dy = t.clientY - st.y; st = null;
+      if (Math.abs(dx) > 60 && Math.abs(dy) < Math.abs(dx) * 0.6) houseClick(dx < 0 ? 'hnext' : 'hprev', null, null, null);
+    }, { passive: true });
+  }
+
   /* ───────── start ───────── */
   function start() {
     root = document.getElementById('app');
     root.innerHTML = '<div id="view" style="display:contents"></div><div id="overlay"></div><div id="toast" class="toast" role="status" aria-live="polite"></div>';
     view = document.getElementById('view'); overlay = document.getElementById('overlay'); toastEl = document.getElementById('toast');
     sheetSwipe();
+    houseSwipe();
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('submit', onSubmit);
