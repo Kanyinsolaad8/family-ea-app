@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.5.0';
+  var VERSION = '2.5.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -310,7 +310,7 @@
       S.offline = false;
       var wasLink = S.mode !== 'app';
       S.mode = 'app';
-      render(wasLink || opts.animate);
+      if (!wasLink && !opts.animate && userBusy()) renderWhenStill(); else render(wasLink || opts.animate);
       setTimeout(maybeTour, 900);
     }).catch(function () {
       var c = !S.demo && LS.get('fea.cache', null);
@@ -2315,19 +2315,30 @@
     return n >= 0 ? 'Google expects the best prices until ' + esc(tripDayLabel(t.bookBy)) + ' · ' + (n === 0 ? 'last day' : n + ' day' + (n === 1 ? '' : 's') + ' left') : 'Past Google’s best-price window. Book when it suits you.';
   }
   function tripDayLabel(iso) { var p = String(iso).split('-'); return +p[2] + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+p[1] - 1]; }
+  // The latest price change Google told us about (null until the first one).
+  function tripLastChange(t) {
+    var best = null;
+    (t.pairs || []).forEach(function (p) {
+      var h = p.hist || []; if (h.length < 2) return;
+      var a = h[h.length - 2], b = h[h.length - 1];
+      if (!best || b[0] > best.at) best = { at: b[0], label: p.label, from: +a[1], to: +b[1] };
+    });
+    return best;
+  }
+  function shortDay(iso) { var t = new Date(iso); return isNaN(t) ? '' : t.getDate() + ' ' + MON[t.getMonth()]; }
   function tripCards() {
     return (S.data.trips || []).map(function (t) {
       var b = tripBest(t); if (!b) return '';
-      var g = safeUrl((b.links || {}).google);
-      return '<article class="card trip"><div class="tags"><span class="tag t-cal">' + svg(I.plane, 11) + ' Flight watch</span>' + ochip('both') + '</div>' +
-        '<b class="ttitle">' + esc(t.title) + '</b><div class="note" style="font-size:.8125rem">' + esc(t.from + ' → ' + t.to + (t.nonstop ? ' · nonstop' : '') + ' · ' + t.people + ' people, return') + '</div>' +
-        '<div class="tprice"><b>' + gbp(b.price) + '</b><span>for ' + t.people + '</span>' + spark(b.hist) + '</div>' +
-        '<div class="note" style="font-size:.8125rem">Cheapest dates: ' + esc(b.label) + (b.airline ? ' · ' + esc(b.airline) : '') + '</div>' +
-        '<div class="note" style="font-size:.8125rem">' + tripMove(b) + '</div>' +
-        '<div class="tby">' + bookByLine(t) + '</div>' +
-        '<div class="btns" style="justify-content:flex-start"><button class="btn small primary" style="flex:0 0 auto" data-act="tilesheet" data-v="trip">All ' + (t.pairs || []).length + ' date options</button>' +
-        (g ? '<a class="btn small" style="flex:0 0 auto" href="' + esc(g) + '" target="_blank" rel="noopener">Google Flights ' + svg(I.ext, 14) + '</a>' : '') + '</div></article>';
+      var n = tripDaysTo(t.bookBy), lc = tripLastChange(t);
+      var sub = [b.label.replace(/^\w{3} /, '').replace(/ – \w{3} /, ' – '), n >= 0 ? n + ' day' + (n === 1 ? '' : 's') + ' to book' : '', lc ? 'updated ' + shortDay(lc.at) : 'watching'].filter(Boolean).join(' · ');
+      return '<button class="tstrip" data-act="tilesheet" data-v="trip" aria-label="Flight watch: ' + esc(t.title) + ', ' + gbp(b.price) + ' for ' + t.people + '">' +
+        '<span class="tsicon">' + svg(I.plane, 18) + '</span><span class="tsbody"><b>' + esc(t.title.split(',')[0]) + ' · ' + gbp(b.price) + ' for ' + t.people + '</b><small>' + esc(sub) + '</small></span>' + svg(I.chev, 16) + '</button>';
     }).join('');
+  }
+  function tripWatching(t) {
+    var lc = tripLastChange(t);
+    var line = lc ? 'Last change ' + shortDay(lc.at) + ': ' + lc.label + ' went ' + (lc.to < lc.from ? 'down' : 'up') + ' from ' + gbp(lc.from) + ' to ' + gbp(lc.to) + '.' : 'No price changes yet.';
+    return '<div class="twatch">' + svg(I.bell, 16) + '<span><b>Google Flights is watching all four dates</b><small>It checks prices for you and emails your EA whenever one changes; the app updates within 10 minutes. ' + esc(line) + '</small></span></div>';
   }
   function tripSheetBody(t) {
     if (!t) return '<div class="empty">No trip being tracked.</div>';
@@ -2341,13 +2352,14 @@
     }).join('');
     var upd = t.updated ? new Date(t.updated) : null;
     return '<div class="note">' + esc(t.from + ' → ' + t.to + ' · nonstop · ' + t.people + ' people, return. Prices are for both of you.') + '</div>' +
-      '<div class="tby">' + bookByLine(t) + '</div>' + rows +
+      '<div class="tby">' + bookByLine(t) + '</div>' + tripWatching(t) + rows +
       '<div class="card pad stack" style="box-shadow:none;gap:6px"><b><span class="klarna">Klarna</span> Paying in parts</b><span class="note" style="font-size:.8125rem">Some booking sites offer Klarna at checkout, usually as Pay in 3. <a href="https://www.alternativeairlines.com/" target="_blank" rel="noopener">Alternative Airlines</a> offers it for UK bookings. Expedia may, depending on the booking: if it’s available, you’ll see it at the payment step. Klarna does its own check first, and it isn’t covered by Section 75, so read the terms before you choose it.</span></div>' +
       '<div class="note" style="font-size:.8125rem">' + esc(t.note || '') + ' Prices come from Google Flights alerts to your EA' + (upd && !isNaN(upd) ? ', last updated ' + upd.getDate() + ' ' + MON[upd.getMonth()] : '') + '.</div>';
   }
   function plan() {
-    var html = [askBar(), whoChips(), '<div class="note">The next three weeks: your EA\u2019s finds, the Family calendar and your timed jots.</div>'];
+    var html = [askBar()];
     var tc = tripCards(); if (tc) html.push(tc);
+    html.push(whoChips(), '<div class="note pnote">Next three weeks \u00b7 your EA\u2019s finds, the Family calendar and your timed jots</div>');
     var groups = planGroups();
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
@@ -3364,6 +3376,14 @@
     }, { passive: true });
   }
 
+  // Redrawing the page mid-scroll stops an iPhone scroll in its tracks, so automatic refreshes wait for a still moment.
+  var lastMove = 0, touching = false;
+  document.addEventListener('touchstart', function () { touching = true; }, { passive: true, capture: true });
+  ['touchend', 'touchcancel'].forEach(function (ev) { document.addEventListener(ev, function () { touching = false; lastMove = Date.now(); }, { passive: true, capture: true }); });
+  ['touchmove', 'wheel', 'scroll'].forEach(function (ev) { document.addEventListener(ev, function () { lastMove = Date.now(); }, { passive: true, capture: true }); });
+  function userBusy() { return touching || Date.now() - lastMove < 1500; }
+  function renderWhenStill() { clearTimeout(S.rws); S.rws = setTimeout(function () { if (userBusy()) renderWhenStill(); else render(); }, 700); }
+
   /* ───────── start ───────── */
   function start() {
     root = document.getElementById('app');
@@ -3396,7 +3416,7 @@
     else { S.mode = 'link'; render(true); }
 
     if (window.FEA_DEMO) window.FEA_DEMO.onChange(function () { if (S.demo) load(); });
-    setInterval(function () { if (S.mode === 'app' && document.visibilityState === 'visible' && !Object.keys(S.pending).length) { paintSync(); load(); } }, 60000);
+    setInterval(function () { if (S.mode === 'app' && document.visibilityState === 'visible' && !Object.keys(S.pending).length && !userBusy()) { paintSync(); load(); } }, 60000);
     // the shared grocery list refreshes every 15 s while it's on screen
     setInterval(function () { if (S.mode === 'app' && S.tab === 'lists' && S.listSeg === 'groceries' && !S.sheet && document.visibilityState === 'visible') load(); }, 15000);
     document.addEventListener('visibilitychange', function () {
