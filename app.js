@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.5.1';
+  var VERSION = '2.6.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -1269,9 +1269,10 @@
     var label = { breakfast: 'Breakfast idea', lunch: 'Lunch idea', snack: 'Snack idea', dinner: 'Tonight', late: 'If you’re peckish' }[slot];
     var main = slot === 'dinner' ? { name: tonight.name, mins: tonight.m && tonight.m.mins, kcal: tonight.m && tonight.m.kcal, protein: tonight.m && tonight.m.protein, note: tonight.kind === 'base' ? 'From Sunday’s cook, just reheat' : tonight.kind === 'batch' ? 'Batch cook day' : '' } : foodIdea(slot);
     var h = '<section class="card pad stack foodc" aria-label="Food"><div class="row-between"><span class="h2 foodh">' + svg(I.leaf, 13) + ' Food · ' + label + '</span><button class="textbtn" data-act="foodplan">Week plan</button></div>';
-    h += '<p class="fmain"><b>' + esc(main.name) + '</b>' + (foodMeta(main) ? '<span>' + esc(foodMeta(main)) + '</span>' : '') + '</p>';
-    if (slot !== 'dinner' && slot !== 'late') h += '<p class="fsub">' + svg(I.moon, 13) + ' Tonight: ' + esc(tonight.name) + '</p>';
-    if (dow === 0 && new Date().getHours() < 19) h += '<p class="fsub">' + svg(I.spark, 13) + ' Batch cook today: <b>' + esc(b.name) + '</b> · about ' + b.mins + ' min, one pot and one tray.</p>';
+    var hasRec = !!recipeOf(main.name);
+    h += recipeBtn(main.name, '<span class="fmain"><b>' + esc(main.name) + '</b>' + (foodMeta(main) ? '<span>' + esc(foodMeta(main)) + '</span>' : '') + (hasRec ? '<span class="reclink">Recipe and ingredients \u203a</span>' : '') + '</span>', 'recbtn fmainb');
+    if (slot !== 'dinner' && slot !== 'late') h += recipeBtn(tonight.name, '<span class="fsub">' + svg(I.moon, 13) + ' Tonight: ' + esc(tonight.name) + (recipeOf(tonight.name) ? ' <span class="reclink">\u203a</span>' : '') + '</span>');
+    if (dow === 0 && new Date().getHours() < 19) h += recipeBtn(b.name, '<span class="fsub">' + svg(I.spark, 13) + ' Batch cook today: <b>' + esc(b.name) + '</b> · about ' + b.mins + ' min, one pot and one tray. <span class="reclink">Recipe \u203a</span></span>');
     h += '<div class="calmbtns">' + (slot !== 'dinner' ? '<button class="btn small" data-act="foodnext">' + svg(I.shuffle, 15) + 'Something else</button>' : '') +
       (f.shop !== foodWeek() && (dow === 0 || dow === 6 || dow === 5) ? '<button class="btn small olive" data-act="foodshop">' + svg(I.plus, 15) + 'Add batch shopping</button>' : '') + '</div>';
     return h + '</section>';
@@ -1282,11 +1283,13 @@
     var html = '<section class="card pad stack foodc"><span class="h2 foodh">' + svg(I.spark, 13) + ' This week’s Sunday cook</span>' +
       '<b class="fbase">' + esc(b.name) + '</b><p class="note" style="margin:0">' + esc(b.what) + ' About ' + b.mins + ' min · roughly £' + b.cost + ' of shopping.</p>' +
       '<div class="calmbtns">' + (f.shop === foodWeek() ? '<span class="note">' + svg(I.check, 14) + ' Shopping added to the list</span>' : '<button class="btn small olive" data-act="foodshop">' + svg(I.plus, 15) + 'Add the shopping (' + b.shop.length + ' items)</button>') +
+      '<button class="btn small" data-act="recipe" data-v="' + esc(b.name) + '">' + svg(I.doc, 15) + 'Recipe</button>' +
       '<button class="btn small" data-act="foodswap">' + svg(I.shuffle, 15) + 'Different cook</button></div></section>';
     // the week
     html += '<section class="stack"><h2 class="h2">Dinners this week</h2><ul class="fweek">' + [1, 2, 3, 4, 5, 6, 0].map(function (d) {
       var x = dinnerFor(d), tag = { batch: 'Batch day', base: 'Reheat', quick: '20 min', fakeaway: 'Fakeaway', treat: 'Treat', swap: 'Your pick' }[x.kind];
-      return '<li class="' + (d === dow ? 'now' : '') + '"><span class="fd">' + DAYNAME[d].slice(0, 3) + '</span><span class="fn">' + esc(x.name) + '</span><span class="ft t-' + x.kind + '">' + tag + '</span></li>';
+      var inner = '<span class="fd">' + DAYNAME[d].slice(0, 3) + '</span><span class="fn">' + esc(x.name) + '</span><span class="ft t-' + x.kind + '">' + tag + '</span>';
+      return '<li class="' + (d === dow ? 'now' : '') + '">' + (recipeOf(x.name) ? '<button class="frow" data-act="recipe" data-v="' + esc(x.name) + '" aria-label="' + DAYNAME[d] + ': ' + esc(x.name) + ', recipe">' + inner + '</button>' : inner) + '</li>';
     }).join('') + '</ul></section>';
     // treat night
     html += '<section class="card pad stack"><span class="h2 foodh">' + svg(I.heart, 13) + ' Friday treat night · ' + esc(FD.TREAT.budget) + '</span>' +
@@ -1300,7 +1303,7 @@
       html += '<ul class="flist">' + FD.SNACKS.map(function (s) { return '<li><span class="fn">' + esc(s.name) + (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</span><span class="fk">~' + s.kcal + ' kcal · ' + s.protein + 'g</span><span class="ft ' + (s.kind === 'Treat' ? 't-treat' : 't-quick') + '">' + s.kind + '</span></li>'; }).join('') + '</ul>';
     } else {
       html += '<ul class="flist">' + FD.MEALS.filter(function (m) { return m.slot === sl; }).map(function (m) {
-        return '<li><span class="fn">' + esc(m.name) + (m.note ? '<small>' + esc(m.note) + '</small>' : '') + '</span><span class="fk">' + m.mins + ' min · ~' + m.kcal + ' kcal · ' + m.protein + 'g</span>' +
+        return '<li><button class="fn frec" data-act="recipe" data-v="' + esc(m.name) + '">' + esc(m.name) + (m.note ? '<small>' + esc(m.note) + '</small>' : '') + '<small class="reclink">Recipe \u203a</small></button><span class="fk">' + m.mins + ' min · ~' + m.kcal + ' kcal · ' + m.protein + 'g</span>' +
           (sl === 'dinner' ? '<button class="textbtn" data-act="foodpick" data-v="' + esc(m.name) + '" aria-label="Have this on a day this week">Use</button>' : '') + '</li>';
       }).join('') + '</ul>';
     }
@@ -1309,10 +1312,47 @@
       '<p class="note" style="margin:0">Rough weekly guide: home shop £55–70, treat night £25–30, snacks £10–15, about ' + FD.weekly + ' in all. Calories, protein and prices are rough guides.</p></section>';
     return html;
   }
+  // ── Recipes: tap any dish for a simple method and ingredient list
+  function recipeOf(name) { return FD && FD.RECIPES ? FD.RECIPES[name] || null : null; }
+  function mealOf(name) {
+    if (!FD) return null;
+    var m = FD.MEALS.filter(function (x) { return x.name === name; })[0];
+    if (m) return m;
+    var b = FD.BASES.filter(function (x) { return x.name === name; })[0];
+    return b ? { mins: b.mins, cost: b.cost, batch: true } : null;
+  }
+  function recipeBtn(name, inner, cls) {
+    return recipeOf(name) ? '<button class="' + (cls || 'recbtn') + '" data-act="recipe" data-v="' + esc(name) + '" aria-label="Recipe: ' + esc(name) + '">' + inner + '</button>' : inner;
+  }
+  function recipeSheet() {
+    var it = S.sheetItem || {}, name = it.name || '', r = recipeOf(name), m = mealOf(name) || {};
+    var head = '<div class="row-between"><h2 style="margin:0;font-size:1.25rem;line-height:1.25">' + esc(name) + '</h2><button class="textbtn rechd" data-act="' + (it.back ? 'recipeback' : 'closesheet') + '">' + (it.fromTile ? 'More ideas' : it.back ? 'Back' : 'Done') + '</button></div>';
+    if (!r) return sheetWrap(name, head + '<div class="empty">No recipe for this one yet.</div>');
+    var meta = [m.mins ? 'About ' + m.mins + ' min' : '', r.serves > 2 ? 'Makes about ' + r.serves + ' portions' : 'Serves 2', m.kcal ? '~' + m.kcal + ' kcal each' : '', m.protein ? m.protein + 'g protein' : ''].filter(Boolean).join(' \u00b7 ');
+    var dinner = FD.MEALS.some(function (x) { return x.name === name && x.slot === 'dinner'; });
+    var h = head + '<p class="note" style="margin:0">' + esc(meta) + '</p>';
+    if (r.uses && r.uses.length) h += '<div class="recbox"><b>' + svg(I.spark, 13) + ' From Sunday\u2019s cook</b><ul>' + r.uses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    if (r.ing.length) h += '<section class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Ingredients</span><ul class="recing">' + r.ing.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+      (r.pantry && r.pantry.length ? '<p class="note" style="margin:0;font-size:.8125rem">Also: ' + esc(r.pantry.join(', ').toLowerCase()) + '.</p>' : '') + '</section>';
+    h += '<section class="stack" style="gap:6px"><span class="h2" style="font-size:.75rem">Method</span><ol class="recsteps">' + r.steps.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ol></section>';
+    if (r.tip) h += '<p class="rectip">' + svg(I.leaf, 13) + ' ' + esc(r.tip) + '</p>';
+    var btns = [];
+    if (r.ing.length) btns.push('<button class="btn olive" data-act="recshop" data-v="' + esc(name) + '">' + svg(I.plus, 16) + 'Add ' + r.ing.length + ' ingredient' + (r.ing.length === 1 ? '' : 's') + ' to shopping</button>');
+    if (dinner) btns.push('<button class="btn" data-act="foodpick" data-v="' + esc(name) + '">' + svg(I.plan, 16) + 'Have it this week</button>');
+    if (btns.length) h += '<div class="stack" style="gap:8px">' + btns.join('') + '</div>';
+    return sheetWrap(name, h);
+  }
   function foodClick(act, v) {
     if (!FD) return false;
     switch (act) {
       case 'foodplan': S.listSeg = 'food'; setTab('lists'); return true;
+      case 'recipe': var from = S.sheet === 'tile' && S.sheetItem && S.sheetItem.k === 'food'; openSheet('recipe', { name: v, back: from ? 'food' : '' }); return true;
+      case 'recipeback': openSheet('tile', { k: 'food' }); return true;
+      case 'recipetile': openSheet('recipe', { name: v, back: 'food', fromTile: true }); return true;
+      case 'recshop':
+        var rr = recipeOf(v); if (!rr) return true;
+        rr.ing.forEach(function (x) { addGrocery(x); });
+        toast('Added ' + rr.ing.length + ' item' + (rr.ing.length === 1 ? '' : 's') + ' to your shared shopping list.'); return true;
       case 'foodnext': S.foodShift = (+(S.foodShift || 0)) + 1; render(); return true;
       case 'foodslot': S.foodSlot = v; render(); return true;
       case 'foodswap': var f = foodState(), cur = FD.BASES.indexOf(foodBase()); foodSave({ base: (cur + 1) % FD.BASES.length, shop: '' }); toast('This week: ' + foodBase().name); return true;
@@ -1480,7 +1520,10 @@
     var label = { breakfast: 'Breakfast idea', lunch: 'Lunch idea', snack: 'Snack idea', dinner: 'Tonight', late: 'If you’re peckish' }[slot];
     var main = slot === 'dinner' ? { name: tonight.name, mins: tonight.m && tonight.m.mins, kcal: tonight.m && tonight.m.kcal, note: tonight.kind === 'base' ? 'Reheat' : tonight.kind === 'batch' ? 'Batch day' : tonight.kind === 'treat' ? 'Order in' : '' } : foodIdea(slot);
     var meta = [main.note && main.note.length < 20 ? main.note : '', main.mins ? main.mins + ' min' : '', main.kcal ? '~' + main.kcal + ' kcal' : ''].filter(Boolean).join(' · ');
-    return '<button class="tile2 food2 t-in" style="--i:' + i + '" data-act="tilesheet" data-v="food" aria-label="Food: ' + esc(label + ', ' + main.name) + '"><span class="plate" aria-hidden="true"></span><span class="fcol"><span class="lbl">' + esc(label) + '</span><b>' + esc(clip(main.name, 44)) + '</b>' + (meta ? '<small>' + esc(meta) + '</small>' : '') + '</span></button>';
+    // The label opens the food card and week plan; the dish itself opens its recipe.
+    var rec = !!recipeOf(main.name), dish = '<b>' + esc(clip(main.name, 44)) + '</b>' + (meta || rec ? '<small>' + esc(meta) + (rec ? '<span class="reclink">' + (meta ? ' \u00b7 ' : '') + 'Recipe \u203a</span>' : '') + '</small>' : '');
+    return '<section class="tile2 food2 t-in" style="--i:' + i + '" aria-label="Food"><span class="plate" aria-hidden="true"></span><span class="fcol"><button class="lbl" data-act="tilesheet" data-v="food">' + esc(label) + ' \u203a</button>' +
+      (rec ? '<button class="ftrec" data-act="recipetile" data-v="' + esc(main.name) + '" aria-label="Recipe: ' + esc(main.name) + '">' + dish + '</button>' : dish) + '</span></section>';
   }
   function growTile(i) {
     var h = habits(), k = kv('kind', {}), due = dueContact(), done = h.list.filter(function (x) { return habitDone(h, x.id); }).length;
@@ -3132,7 +3175,7 @@
   function renderOverlay() {
     if (S.mode !== 'app' || !S.sheet) { overlay.innerHTML = ''; return; }
     var focusId = document.activeElement && overlay.contains(document.activeElement) ? document.activeElement.id : '';
-    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : S.sheet === 'grow' ? growSheet() : S.sheet === 'tile' ? tileSheet() : S.sheet === 'house' ? houseSheet() : S.sheet === 'jotview' ? jotViewSheet() : S.sheet === 'guide' ? guideSheet() : S.sheet === 'tour' ? tourSheet() : snoozeSheet();
+    overlay.innerHTML = S.sheet === 'settings' ? settingsSheet() : S.sheet === 'jot' ? jotSheet() : S.sheet === 'report' ? reportSheet() : S.sheet === 'challenge' ? challengeSheet() : S.sheet === 'breathe' ? breathSheet() : S.sheet === 'grow' ? growSheet() : S.sheet === 'tile' ? tileSheet() : S.sheet === 'house' ? houseSheet() : S.sheet === 'jotview' ? jotViewSheet() : S.sheet === 'guide' ? guideSheet() : S.sheet === 'tour' ? tourSheet() : S.sheet === 'recipe' ? recipeSheet() : snoozeSheet();
     S.sheetFresh = false;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus({ preventScroll: true });
   }
