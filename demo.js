@@ -20,7 +20,7 @@
   }
   function inH(h) { return new Date(Date.now() + h * 3600000).toISOString(); }
   function at(days, h, m) { var d = new Date(now + days * DAY); d.setHours(h || 9, m || 0, 0, 0); return d.toISOString(); }
-  function monthsAgo(n, day) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); d.setDate(Math.min(day, 28)); d.setHours(10, 0, 0, 0); return d.toISOString(); }
+  function monthsAgo(n, day) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); d.setDate(Math.min(day, 28)); d.setHours(10, 0, 0, 0); if (d.getTime() > Date.now()) return monthsAgo(n + 1, day); return d.toISOString(); } // history is always in the past
   function dayKey(days) { var d = new Date(now + days * DAY); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function canSee(viewer, owner) { return owner === viewer || owner === 'both' || owner === 'either'; }
 

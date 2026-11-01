@@ -1187,3 +1187,7 @@ main{overscroll-behavior-y:contain}
 .ftrec b{font-family:var(--display);font-size:.98rem;line-height:1.2;font-weight:600}
 .ftrec small{font-size:.72rem;color:var(--muted);font-weight:700}
 .food2 .lbl{cursor:pointer}
+
+/* v2.6.1 House search: move window from the notice clause */
+.hmove{display:flex;gap:8px;align-items:flex-start;padding:8px 12px;border-radius:14px;background:var(--surface2);font-size:.8125rem;line-height:1.4;color:var(--ink)}
+.hmove svg{flex:0 0 auto;margin-top:2px;color:var(--accentInk)}

@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.6.0';
+  var VERSION = '2.6.1';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -2205,6 +2205,7 @@
     if (areas.length > 1) html.push('<div class="chips hareas" role="group" aria-label="Show homes in">' + [['all', 'All', fresh0.length + short0.length]].concat(areas.map(function (a) { return [a[0], a[0], a[1]]; })).map(function (a) {
       return '<button class="fchip" data-act="harea" data-v="' + esc(a[0]) + '" aria-pressed="' + ((S.hArea || 'all') === a[0]) + '">' + esc(a[1]) + ' <span class="hac">' + a[2] + '</span></button>';
     }).join('') + '</div>');
+    html.push(moveLine());
     // 1. New homes, one at a time
     if (S.hIdx >= fresh.length) S.hIdx = Math.max(0, fresh.length - 1);
     var cur = fresh[S.hIdx || 0];
@@ -2249,6 +2250,22 @@
     return '<button class="hrow" data-act="hopen" data-id="' + esc(i.id) + '"><span class="hrs">' + esc(x.score || '–') + '</span><span class="col" style="display:flex;flex-direction:column;flex:1;min-width:0;gap:2px">' +
       '<b>' + esc(hPlace(i)) + ' · ' + esc(x.price || '') + '</b><span class="note' + (nudge ? ' hwait' : '') + '" style="font-size:.8125rem">' + esc(wait) + '</span></span><span class="chev">' + svg(I.chev, 18) + '</span></button>';
   }
+  // Your notice: one month, ending on the 1st, given at least a month before. You find the home first, then give notice,
+  // so the earliest end date is the first 1st at least a month after (today + 3 days). Up to 14 days of double rent is fine.
+  function moveWindow(now) {
+    var d = dayStart(now || new Date()); d.setDate(d.getDate() + 3);
+    var t = new Date(d.getFullYear(), d.getMonth() + 1, d.getDate());
+    if (t.getDate() !== d.getDate()) t = new Date(d.getFullYear(), d.getMonth() + 2, 1); // e.g. 31 Jan + 1 month
+    var end = t.getDate() === 1 ? t : new Date(t.getFullYear(), t.getMonth() + 1, 1);
+    var notice = new Date(end.getFullYear(), end.getMonth() - 1, 1), from = new Date(end.getTime() - 14 * 86400000);
+    var MN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    var lab = function (x) { return x.getDate() + ' ' + MN[x.getMonth()]; };
+    return { end: end, from: from, notice: notice, endLabel: lab(end), fromLabel: lab(from), noticeLabel: lab(notice) };
+  }
+  function moveLine() {
+    var w = moveWindow();
+    return '<div class="hmove">' + svg(I.plan, 14) + '<span>Look for homes starting <b>' + esc(w.fromLabel) + ' \u2013 ' + esc(w.endLabel) + '</b>. Once one is agreed, give notice by ' + esc(w.noticeLabel) + ' to leave on ' + esc(w.endLabel) + '.</span></div>';
+  }
   // A polite, specific first message to the agent, built from what we know about the home. Only asks what the listing doesn't already say.
   function houseEnquiry(i) {
     var x = i.data || {};
@@ -2268,7 +2285,7 @@
     qs.push('the minimum tenancy length (we\u2019re looking for a long-term let)');
     qs.push('when we could come and view it');
     return 'Hello,\n\nI\u2019m interested in the ' + what + (portal ? ' listed on ' + portal : '') + (x.price ? ' at ' + x.price : '') + '.\n\n' +
-      'We\u2019re a working couple hoping to move in late November or early December.\n\nCould you let me know:\n' + qs.map(function (q) { return '\u2022 ' + q; }).join('\n') +
+      'We\u2019re a working couple hoping to move in between ' + moveWindow().fromLabel + ' and ' + moveWindow().endLabel + '.\n\nCould you let me know:\n' + qs.map(function (q) { return '\u2022 ' + q; }).join('\n') +
       '\n\nThank you,\n' + (S.name || '');
   }
   function hStepPost(i, stage, viewingAt) {
