@@ -4,7 +4,7 @@
 
   var CFG = window.FEA_CONFIG || {};
   var PEOPLE = CFG.PEOPLE || { ayo: 'Ayo', itunu: 'Itunu' };
-  var VERSION = '2.6.1';
+  var VERSION = '2.7.0';
   var PENDING_MS = 5000;
 
   /* ───────── helpers ───────── */
@@ -282,7 +282,7 @@
       queue: res.queue || [], messages: res.messages || [], runs: res.runs || {}, lastSync: res.lastSync || res.serverTime || '',
       notes: res.notes || [], groceries: res.groceries || [], snoozes: res.snoozes || [], gratitude: res.gratitude || [],
       doneToday: res.doneToday || 0, alerts: res.alerts || { topic: '', morning: true, evening: true },
-      events: res.events || [], kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || [], appleNew: res.appleNew || [], trips: (res.trips || []).filter(function (t) { return t && t.pairs && t.pairs.length; })
+      events: res.events || [], calendars: res.calendars || {}, checks: res.checks || {}, kv: res.kv || {}, wins: res.wins || [], checkin: res.checkin || null, food: res.food || null, vents: res.vents || [], appleNew: res.appleNew || [], trips: (res.trips || []).filter(function (t) { return t && t.pairs && t.pairs.length; })
     };
     if (keep) S.data.items.forEach(function (i) { var o = oldHouses[i.id]; if (o) { i.data = o.data; i.status = o.status; } });
     if (keep) Object.keys(keep).forEach(function (k) { S.data[k] = keep[k]; }); // a reply that left before your last tap is out of date for your lists
@@ -312,6 +312,7 @@
       S.mode = 'app';
       if (!wasLink && !opts.animate && userBusy()) renderWhenStill(); else render(wasLink || opts.animate);
       setTimeout(maybeTour, 900);
+      if (!S.healed) { S.healed = true; setTimeout(healPush, 1500); }
     }).catch(function () {
       var c = !S.demo && LS.get('fea.cache', null);
       if (c && c.res) {
@@ -904,7 +905,7 @@
     var endNext = new Date(endThis.getTime() + 7 * 86400000);
     var endAfter = new Date(endNext.getTime() + 7 * 86400000);
     var groups = [['Overdue', []], ['This week', []], ['Next week', []], ['Week after', []], ['Later', []]];
-    var cal = okWho('both') ? calEvents().filter(function (e) { return Date.parse(e.end || e.start) >= Date.now(); }).map(function (e) { return { cal: true, id: e.id, title: e.title, due: e.start, end: e.end, allDay: e.allDay, location: e.location, for: 'both' }; }) : [];
+    var cal = calEvents().filter(function (e) { return Date.parse(e.end || e.start) >= Date.now() && okWho(e.src === 'mine' ? S.person : 'both'); }).map(function (e) { return { cal: true, src: e.src || 'family', id: e.id, title: e.title, due: e.start, end: e.end, allDay: e.allDay, location: e.location, for: e.src === 'mine' ? S.person : 'both' }; });
     var jots = openNotes().filter(function (n) { var t = Date.parse(n.remindAt); return t > endOfToday().getTime() && okWho(n.shared ? 'both' : S.person); })
       .map(function (n) { return { jot: true, id: n.id, title: n.text, due: n.remindAt, for: n.shared ? 'both' : S.person, n: n }; });
     var hv = okWho('both') ? houseViewings().filter(function (v) { return Date.parse(v.due) >= dayStart(new Date()).getTime(); }) : [];
@@ -1547,6 +1548,66 @@
     if (lookBackCard()) out.push('<button class="notice t-in" data-act="tilesheet" data-v="lookback">' + svg(I.history, 16) + '<span><b>Your week, looking back</b><small>Grateful and didn’t-like lines, only you</small></span>' + svg(I.chev, 16) + '</button>');
     return out.join('');
   }
+  /* ───────── New from your EA, and phones that have quietly lost their alerts ───────── */
+  var NEW_AREAS = [['intel', 'intel', 'intel:mine'], ['migration', 'migration', 'intel:mig'], ['plan', 'Plan ahead', 'plan']];
+  function seenAt(m) { var v = LS.get('fea.seen.' + m, ''); if (!v) { v = new Date(Date.now() - 3 * 86400000).toISOString(); LS.set('fea.seen.' + m, v); } return v; }
+  function markSeen(t) {
+    var m = t === 'plan' ? 'plan' : t === 'intel' ? (S.seg === 'mig' ? 'migration' : 'intel') : '';
+    if (m) LS.set('fea.seen.' + m, new Date().toISOString());
+  }
+  function newCounts() {
+    return NEW_AREAS.map(function (a) {
+      var since = Date.parse(seenAt(a[0])) || 0;
+      return [a, items(a[0]).filter(function (i) { return i.status === 'open' && (Date.parse(i.created) || 0) > since; }).length];
+    }).filter(function (x) { return x[1] > 0; });
+  }
+  function newTile() {
+    if (S.demo) return '';
+    var c = newCounts(); if (!c.length) return '';
+    return '<button class="notice t-in" data-act="newgo" data-v="' + c[0][0][2] + '">' + svg(I.bell, 16) + '<span><b>New from your EA</b><small>' +
+      c.map(function (x) { return x[1] + ' ' + x[0][1]; }).join(' · ') + '</small></span>' + svg(I.chev, 16) + '</button>';
+  }
+  function alertsTile() {
+    if (S.demo || !S.pushChecked || !pushSupported() || S.pushOn) return '';
+    var blocked = typeof Notification !== 'undefined' && Notification.permission === 'denied';
+    return '<button class="notice t-in" data-act="' + (blocked ? 'settings' : 'pushon') + '">' + svg(I.bell, 16) + '<span><b>Alerts are off on this ' + (isIOS() ? 'phone' : 'device') + '</b><small>' +
+      (blocked ? 'Blocked in Settings › Notifications › Family EA' : 'Tap to turn them on, so new things pop up') + '</small></span>' + svg(I.chev, 16) + '</button>';
+  }
+  function lastCheckLine(mod) {
+    if (mod === 'migration') {
+      var c = (S.data.checks || {}).migration;
+      if (!c || !c.date) return '';
+      var x = new Date(c.date + 'T12:00:00Z'), age = Math.floor((Date.now() - x.getTime()) / 86400000), day = DOW[x.getDay()] + ' ' + x.getDate() + ' ' + MON[x.getMonth()];
+      return '<div class="note pnote">' + (age > 5 ? 'No check logged since ' + esc(day) + '. Checks run Mon and Thu.' : 'Last checked ' + esc(day) + ' · ' + esc(c.note || 'no change')) + '</div>';
+    }
+    var r = (S.data.runs || {}).intel;
+    return r ? '<div class="note pnote">Last brief ' + esc(whenLabel(r)) + '. Briefs come Mon and Thu at 9am.</div>' : '';
+  }
+  // The phone may think alerts are on while the EA has lost its address (Apple can retire it). Check once per visit and mend it quietly.
+  function healPush() {
+    if (S.demo || !pushSupported()) { S.pushChecked = true; return; }
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) { S.pushOn = false; return; }
+      return reg.pushManager.getSubscription().then(function (sub) {
+        if (!sub || Notification.permission !== 'granted') { S.pushOn = false; return; }
+        var old = sub.toJSON();
+        return api.post({ type: 'pushsub', op: 'add', sub: old }).then(function (r) {
+          if (!r || !r.ok) { S.pushOn = false; return; }
+          S.data.alerts.devices = r.devices;
+          if (!r.wasGone) { S.pushOn = true; return; }
+          var vapid = (S.data.alerts || {}).vapid;
+          return api.post({ type: 'pushsub', op: 'remove', sub: old })
+            .then(function () { return sub.unsubscribe(); })
+            .then(function () { return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(vapid) }); })
+            .then(function (ns) { return api.post({ type: 'pushsub', op: 'add', sub: ns.toJSON() }); })
+            .then(function (r2) { S.pushOn = !!(r2 && r2.ok); if (r2 && r2.ok) S.data.alerts.devices = r2.devices; });
+        });
+      });
+    }).catch(function () { S.pushOn = false; }).then(function () {
+      S.pushChecked = true;
+      if (S.tab === 'today' && !S.sheet && !userBusy()) render();
+    });
+  }
   function tileSheet() {
     var k = (S.sheetItem || {}).k, v = (S.sheetItem || {}).v, title = '', body = '';
     if (k === 'day') { title = 'Your day'; body = yourDay(needs()).html; }
@@ -1570,6 +1631,7 @@
         '<button class="btn small olive" data-act="copykey">Copy my key</button></section>');
     }
     var t = [verseTile(1), nextTile(2), calmTile(3), gratTile(4), waterTile(5), foodTile(6), growTile(7)].join('');
+    var top = alertsTile() + newTile(); if (top) html.push('<div class="notices">' + top + '</div>'); // what needs a look goes first
     html.push('<div class="bento" aria-label="Today">' + t + '</div>');
     var nt = noticeTiles(); if (nt) html.push('<div class="notices">' + nt + '</div>');
     var q = S.data.queue.concat(Object.keys(S.pending).map(function (id) { return { text: S.pending[id].label + ' (sending)' }; }));
@@ -2419,7 +2481,9 @@
   function plan() {
     var html = [askBar()];
     var tc = tripCards(); if (tc) html.push(tc);
-    html.push(whoChips(), '<div class="note pnote">Next three weeks \u00b7 your EA\u2019s finds, the Family calendar and your timed jots</div>');
+    var cs = (S.data.calendars || {}).mine;
+    html.push(whoChips(), '<div class="note pnote">Next three weeks \u00b7 your EA\u2019s finds, ' + (cs === 'linked' ? 'shared calendars, your own calendar' : 'the shared calendars') + ' and your timed jots' +
+      (S.demo || cs === 'linked' ? '' : cs === 'waiting' ? '. Your own calendar isn\u2019t reaching the EA yet: check it\u2019s shared with the EA\u2019s Gmail.' : '. To see your own calendar here, share it with the EA\u2019s Gmail.') + '</div>');
     var groups = planGroups();
     if (!groups.length) html.push('<div class="empty">Nothing coming up for this filter.</div>');
     groups.forEach(function (g) {
@@ -2434,7 +2498,7 @@
         if (i.cal || i.jot) {
           var tt = d(i.due);
           return '<article class="card plan lite"><div class="date"><small>' + (tt ? DOW[tt.getDay()] : '\u2013') + '</small><b>' + (tt ? tt.getDate() : '') + '</b></div>' +
-            '<div class="grow"><div class="tags"><span class="tag ' + (i.cal ? 't-cal">' + svg(I.plan, 11) + ' Family calendar' : 't-jot">Your jot') + '</span>' + ochip(i.for) + (i.jot ? jotTags(i.n) : '') + '</div>' +
+            '<div class="grow"><div class="tags"><span class="tag ' + (i.cal ? 't-cal">' + svg(I.plan, 11) + ' ' + ({ mine: 'Your calendar', ea: 'EA calendar' }[i.src] || 'Family calendar') : 't-jot">Your jot') + '</span>' + ochip(i.for) + (i.jot ? jotTags(i.n) : '') + '</div>' +
             '<b>' + esc(i.title) + '</b><div class="note" style="font-size:.8125rem">' + esc(i.cal ? evWhen({ allDay: i.allDay, start: i.due, end: i.end }) + (i.location ? ' \u00b7 ' + i.location : '') : hhmm(i.due)) + '</div>' +
             (i.jot ? '<div class="btns" style="justify-content:flex-start"><button class="btn small" style="flex:0 0 auto" data-act="editnote" data-id="' + esc(i.id) + '">' + svg(I.edit, 15) + 'Edit</button></div>' : '') + '</div></article>';
         }
@@ -2472,7 +2536,7 @@
     var html = [askBar(), '<div class="seg segstrong" role="tablist" aria-label="Brief">' + [['mine', 'Yours', unread('intel')], ['mig', 'Migration', unread('migration')]].map(function (s) {
       return '<button role="tab" aria-selected="' + (S.seg === s[0]) + '" data-act="seg" data-v="' + s[0] + '">' + s[1] + (s[2] ? ' <span class="segn">' + s[2] + '</span>' : '') + '</button>';
     }).join('') + '</div>',
-    '<div class="note">' + (mod === 'migration' ? 'Sensitive. Shown only in the app, never in phone alerts.' : 'Your briefs, plus anything shared. Itunu’s stay private to her.') + '</div>'];
+    '<div class="note">' + (mod === 'migration' ? 'Sensitive. Alerts only say there\u2019s an update, never what it is.' : 'Your briefs, plus anything shared. Itunu’s stay private to her.') + '</div>', lastCheckLine(mod)];
     if (!list.length) html.push('<div class="empty">Nothing new. Briefs arrive Mon and Thu at 09:00.</div>');
     list.forEach(function (i) {
       var x = i.data || {}, rag = x.rag || 'note', read = i.status === 'read', url = safeUrl(x.url);
@@ -3216,7 +3280,7 @@
 
   /* ───────── events ───────── */
   function findItem(id) { return S.data.items.filter(function (i) { return i.id === id; })[0]; }
-  function setTab(t) { S.tab = t; LS.set('fea.tab', t); if (t === 'ask') { S.chatSeen = new Date().toISOString(); LS.set('fea.chatSeen', S.chatSeen); } render(); }
+  function setTab(t) { S.tab = t; LS.set('fea.tab', t); markSeen(t); if (t === 'ask') { S.chatSeen = new Date().toISOString(); LS.set('fea.chatSeen', S.chatSeen); } render(); }
 
   function onClick(e) {
     var el = e.target.closest('[data-act]');
@@ -3260,7 +3324,7 @@
           sendToEA(/^Sent \d+ files?\.$/.test(m.text) && m.retryFiles ? '' : m.text, m.retryFiles || [], m.retryRef || null);
         }
         break;
-      case 'seg': S.seg = v; render(); break;
+      case 'seg': S.seg = v; markSeen('intel'); render(); break;
       case 'attach': openPicker(); break;
       case 'attachfor':
         item = findItem(id);
@@ -3284,7 +3348,7 @@
       case 'histjump': case 'report': openReport(id); break;
       case 'openitem':
         item = findItem(id); closeSheet();
-        if (item) { if (item.module === 'intel' || item.module === 'migration') { S.seg = item.module === 'migration' ? 'migration' : 'mine'; setTab('intel'); } else setTab({ houses: 'houses', plan: 'plan' }[item.module] || 'today'); }
+        if (item) { if (item.module === 'intel' || item.module === 'migration') { S.seg = item.module === 'migration' ? 'mig' : 'mine'; setTab('intel'); } else setTab({ houses: 'houses', plan: 'plan' }[item.module] || 'today'); }
         break;
       case 'newquote': S.quoteTheme = freshTheme(quoteTheme()); LS.set('fea.qTheme', S.quoteTheme); S.quoteIdx = Math.floor(Math.random() * 50); render(); break;
       case 'quotetheme': var qn = quotePool().length; S.quoteIdx = qn > 1 ? (S.quoteIdx % qn + 1 + Math.floor(Math.random() * (qn - 1))) % qn : 0; render(); break;
@@ -3352,6 +3416,7 @@
       case 'pref': S.prefs[el.getAttribute('data-k')] = v; applyPrefs(); render(); renderOverlay(); if (/^(waterGoal|game)$/.test(el.getAttribute('data-k')) && glasses() + Object.keys(S.water).length) syncWater(); break;
       case 'toggle': var k = el.getAttribute('data-k'); S.prefs[k] = !S.prefs[k]; applyPrefs(); render(); renderOverlay(); break;
       case 'refresh': load(); break;
+      case 'newgo': if (v.indexOf('intel:') === 0) { S.seg = v.slice(6); setTab('intel'); } else setTab(v); break;
       case 'hideinstall': S.installHidden = true; LS.set('fea.installHidden', true); render(); break;
       case 'copykey':
         if (navigator.clipboard && S.key) navigator.clipboard.writeText(S.key).then(function () { toast('Key copied. Paste it in the Home Screen app.'); }, function () { toast('Couldn’t copy. Your key: ' + S.key, { ms: 8000 }); });
